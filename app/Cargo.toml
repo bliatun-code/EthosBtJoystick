@@ -1,0 +1,51 @@
+[package]
+name = "ethos-bt-joystick"
+version = "1.0.0"
+edition = "2021"
+description = "Use a FrSky Ethos radio as a wireless (Bluetooth) joystick for simulators on Windows"
+build = "build.rs"
+
+[lib]
+name = "ethos_bt_joystick"
+path = "src/lib.rs"
+
+[[bin]]
+name = "EthosBtJoystick"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Devices_Properties",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+strip = true

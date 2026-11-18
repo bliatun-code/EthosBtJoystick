@@ -1,0 +1,80 @@
+;
+; Ethos BT Joystick - virtual HID joystick (UMDF 2 HID minidriver)
+;
+; Root-enumerated device "root\EthosBtJoystick". The user-mode driver
+; ethosjoy.dll runs below the in-box mshidumdf.sys / WUDFRd.sys drivers.
+; Requires Windows 11 (build 22000) or later because it relies on the
+; in-box MsHidUmdf.inf.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = HIDClass
+ClassGuid   = {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider    = %ProviderString%
+DriverVer   = 11/18/2026,1.0.0.0
+CatalogFile = ethosjoy.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskDescription%,,,
+
+[SourceDisksFiles]
+ethosjoy.dll = 1
+
+; ================= Device section =====================
+
+[Manufacturer]
+%ManufacturerString% = EthosJoy, NTamd64.10.0...22000
+
+[EthosJoy.NTamd64.10.0...22000]
+%DeviceDesc% = EthosJoy, root\EthosBtJoystick
+
+[EthosJoy.NT]
+CopyFiles = UMDriverCopy
+Include   = MsHidUmdf.inf
+Needs     = MsHidUmdf.NT
+Include   = WUDFRD.inf
+Needs     = WUDFRD_LowerFilter.NT
+
+[EthosJoy.NT.hw]
+Include = MsHidUmdf.inf
+Needs   = MsHidUmdf.NT.hw
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.hw
+
+[EthosJoy.NT.Services]
+Include = MsHidUmdf.inf
+Needs   = MsHidUmdf.NT.Services
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.Services
+
+[EthosJoy.NT.Filters]
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.Filters
+
+[EthosJoy.NT.Wdf]
+UmdfService                = "EthosJoy", EthosJoy_Install
+UmdfServiceOrder           = EthosJoy
+UmdfKernelModeClientPolicy = AllowKernelModeClients
+UmdfFileObjectPolicy       = AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction    = Copy
+UmdfFsContextUsePolicy     = CanUseFsContext2
+
+[EthosJoy_Install]
+UmdfLibraryVersion = 2.15.0
+ServiceBinary      = "%13%\ethosjoy.dll"
+
+; ================= copy files =====================
+
+[UMDriverCopy]
+ethosjoy.dll
+
+[Strings]
+ProviderString     = "Ethos BT Joystick"
+ManufacturerString = "Ethos BT Joystick"
+DiskDescription    = "Ethos BT Joystick driver"
+DeviceDesc         = "Ethos BT Joystick (virtual HID joystick)"

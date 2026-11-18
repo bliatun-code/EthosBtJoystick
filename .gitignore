@@ -1,0 +1,7 @@
+# build output
+/app/target/
+/driver/out/
+/dist/
+
+# downloaded WDK package (tools\get-wdk.ps1 fetches it again)
+/tools/wdk-nuget/
