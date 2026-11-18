@@ -19,7 +19,7 @@ installeres med ett klikk.
 
 1. **På radioen:** `Model > Trainer`, legg til en Bluetooth-link, slå den på og velg
    **Slave** (CH1–CH8 eller CH1–CH16).
-2. Start `dist\EthosBtJoystick.exe`.
+2. Start `dist\EthosBtJoystick.exe` (se [Bygge selv](#bygge-selv)).
 3. Klikk **Installer driver …** (bare første gang) og godkjenn UAC-spørsmålet.
 4. Klikk **Søk etter radio**, velg radioen i listen og klikk **Koble til**.
    Windows-paring er ikke nødvendig.
