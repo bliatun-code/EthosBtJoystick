@@ -6,6 +6,10 @@
 ; Requires Windows 11 (build 22000) or later because it relies on the
 ; in-box MsHidUmdf.inf.
 ;
+; Derived from the INF of Microsoft's "vhidmini2" UMDF 2 sample.
+; Portions Copyright (c) Microsoft Corporation All rights Reserved.
+; Licensed under the Microsoft Public License (MS-PL), see LICENSE.
+;
 
 [Version]
 Signature   = "$WINDOWS NT$"

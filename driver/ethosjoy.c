@@ -12,8 +12,12 @@
  * The driver runs entirely in user mode (WUDFHost.exe) below the in-box
  * mshidumdf.sys pass-through driver. No kernel code of our own is involved.
  *
- * The request plumbing follows Microsoft's "vhidmini2" UMDF 2 sample
- * (https://github.com/microsoft/Windows-driver-samples, MS-PL).
+ * The request plumbing is derived from Microsoft's "vhidmini2" UMDF 2 sample
+ * (https://github.com/microsoft/Windows-driver-samples).
+ *
+ * Portions Copyright (C) Microsoft Corporation, All Rights Reserved.
+ * Licensed under the Microsoft Public License (MS-PL), see the LICENSE file
+ * in this directory.
  */
 
 #define WIN32_NO_STATUS

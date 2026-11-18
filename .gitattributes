@@ -1,0 +1,9 @@
+# Normalise line endings in the repository; check out text files natively.
+* text=auto
+
+# Windows tooling expects CRLF for these.
+*.ps1 text eol=crlf
+*.inf text eol=crlf
+*.rc  text eol=crlf
+
+*.png binary

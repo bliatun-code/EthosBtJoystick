@@ -1,5 +1,10 @@
 # Ethos BT Joystick
 
+> **English:** Use a FrSky Ethos radio as a wireless Bluetooth joystick for simulators
+> on Windows. A single executable with its own virtual HID joystick driver – no vJoy
+> required. The app itself is available in English and Norwegian; this README is in
+> Norwegian.
+
 Bruk en FrSky Ethos-radio som **trådløs joystick** for simulatorer på Windows – over
 Bluetooth, uten kabel.
 
@@ -136,7 +141,15 @@ Resultatet havner i `dist\EthosBtJoystick.exe`.
 - [FrSky-Bluetooth-Trainer](https://github.com/garfield2412/FrSky-Bluetooth-Trainer)
   for inspirasjon og bekreftelse på rammeformatet fra Ethos.
 - OpenTX/EdgeTX for den opprinnelige Bluetooth-trainer-protokollen.
-- Microsofts driver-eksempel `vhidmini2` (MS-PL), som forespørselshåndteringen i
-  driveren er bygget etter.
+- Microsofts driver-eksempel `vhidmini2`, som forespørselshåndteringen i driveren er
+  avledet av.
 
-Dette er et uavhengig hobbyprosjekt og har ingen tilknytning til FrSky.
+## Lisens
+
+- Prosjektet er lisensiert under **MIT-lisensen**, se [LICENSE](LICENSE).
+- Unntak: innholdet i mappen `driver/` er avledet av Microsofts eksempel `vhidmini2`
+  og er lisensiert under **Microsoft Public License (MS-PL)**, se
+  [driver/LICENSE](driver/LICENSE).
+
+Dette er et uavhengig hobbyprosjekt og har ingen tilknytning til FrSky. FrSky og
+ETHOS er varemerker som tilhører sine respektive eiere.
