@@ -19,7 +19,10 @@ and installed with one click.
 
 1. **On the radio:** `Model > Trainer`, add a Bluetooth link, enable it and select
    **Slave** (CH1–CH8 or CH1–CH16).
-2. Start `dist\EthosBtJoystick.exe` (see [Building](#building)).
+2. Download the zip from the
+   [latest release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
+   extract it and start `EthosBtJoystick.exe`. Windows may warn about an unknown
+   publisher the first time, because the program is not code signed.
 3. Click **Install driver …** (first time only) and approve the UAC prompt.
 4. Click **Search for radio**, select the radio in the list and click **Connect**.
    Pairing in Windows is not needed.
@@ -109,13 +112,14 @@ powershell -ExecutionPolicy Bypass -File tools\get-wdk.ps1
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-The result ends up in `dist\EthosBtJoystick.exe`.
+The result ends up in `dist\EthosBtJoystick.exe`. `tools\package-release.ps1` then
+packs it into a release zip together with the license files.
 
 | Folder | Contents |
 | --- | --- |
 | `app\` | The app (Rust, egui). `cargo test` runs the unit tests. |
 | `driver\` | The driver (C), INF file and build script. |
-| `tools\` | Script that fetches the WDK. |
+| `tools\` | Scripts that fetch the WDK and package a release. |
 | `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup) and `joycheck` (writes to the installed driver and reads back). |
 
 ## Troubleshooting

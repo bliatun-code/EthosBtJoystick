@@ -19,7 +19,10 @@ installeres med ett klikk.
 
 1. **På radioen:** `Model > Trainer`, legg til en Bluetooth-link, slå den på og velg
    **Slave** (CH1–CH8 eller CH1–CH16).
-2. Start `dist\EthosBtJoystick.exe` (se [Bygge selv](#bygge-selv)).
+2. Last ned zip-filen fra
+   [siste release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
+   pakk den ut og start `EthosBtJoystick.exe`. Windows kan advare om ukjent utgiver
+   første gang, fordi programmet ikke er kodesignert.
 3. Klikk **Installer driver …** (bare første gang) og godkjenn UAC-spørsmålet.
 4. Klikk **Søk etter radio**, velg radioen i listen og klikk **Koble til**.
    Windows-paring er ikke nødvendig.
@@ -106,13 +109,14 @@ powershell -ExecutionPolicy Bypass -File tools\get-wdk.ps1
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Resultatet havner i `dist\EthosBtJoystick.exe`.
+Resultatet havner i `dist\EthosBtJoystick.exe`. `tools\package-release.ps1` pakker
+den deretter i en release-zip sammen med lisensfilene.
 
 | Mappe | Innhold |
 | --- | --- |
 | `app\` | Appen (Rust, egui). `cargo test` kjører enhetstestene. |
 | `driver\` | Driveren (C), INF-fil og byggeskript. |
-| `tools\` | Skript for å hente WDK. |
+| `tools\` | Skript for å hente WDK og pakke en release. |
 | `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag) og `joycheck` (skriver til den installerte driveren og leser tilbake). |
 
 ## Feilsøking
