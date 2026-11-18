@@ -1,155 +1,158 @@
 # Ethos BT Joystick
 
-> **English:** Use a FrSky Ethos radio as a wireless Bluetooth joystick for simulators
-> on Windows. A single executable with its own virtual HID joystick driver – no vJoy
-> required. The app itself is available in English and Norwegian; this README is in
-> Norwegian.
+*English · [Norsk](README.no.md)*
 
-Bruk en FrSky Ethos-radio som **trådløs joystick** for simulatorer på Windows – over
-Bluetooth, uten kabel.
+Use a FrSky Ethos radio as a **wireless joystick** for simulators on Windows – over
+Bluetooth, without a cable.
 
-Radioen sender styrekanalene sine via Bluetooth-trainer-funksjonen. Appen tar imot
-kanalene og presenterer dem for Windows som en vanlig joystick («Ethos BT Joystick»)
-med 8 akser og opptil 32 knapper.
+The radio sends its control channels through its Bluetooth trainer function. The app
+receives the channels and presents them to Windows as an ordinary joystick
+(“Ethos BT Joystick”) with 8 axes and up to 32 buttons.
 
-Alt ligger i **én exe-fil**. Det brukes verken vJoy eller andre tredjepartsdrivere:
-den virtuelle joysticken er en egen liten driver som følger med i exe-filen og
-installeres med ett klikk.
+Everything is in **a single exe file**. Neither vJoy nor any other third-party driver
+is used: the virtual joystick is a small driver of its own that is embedded in the exe
+and installed with one click.
 
-![Skjermbilde](docs/skjermbilde.png)
+![Screenshot](docs/skjermbilde.png)
 
-## Kom i gang
+*The screenshot shows the Norwegian interface. The app is also available in English.*
 
-1. **På radioen:** `Model > Trainer`, legg til en Bluetooth-link, slå den på og velg
-   **Slave** (CH1–CH8 eller CH1–CH16).
-2. Start `dist\EthosBtJoystick.exe`.
-3. Klikk **Installer driver …** (bare første gang) og godkjenn UAC-spørsmålet.
-4. Klikk **Søk etter radio**, velg radioen i listen og klikk **Koble til**.
-   Windows-paring er ikke nødvendig.
-5. Velg **Ethos BT Joystick** som kontroller i simulatoren og kalibrer der.
+## Getting started
 
-Appen husker radioen og kobler til automatisk neste gang. Faller forbindelsen ut,
-kobles det til igjen av seg selv.
+1. **On the radio:** `Model > Trainer`, add a Bluetooth link, enable it and select
+   **Slave** (CH1–CH8 or CH1–CH16).
+2. Start `dist\EthosBtJoystick.exe` (see [Building](#building)).
+3. Click **Install driver …** (first time only) and approve the UAC prompt.
+4. Click **Search for radio**, select the radio in the list and click **Connect**.
+   Pairing in Windows is not needed.
+5. Select **Ethos BT Joystick** as the controller in the simulator and calibrate it
+   there.
 
-### Kanaler, akser og knapper
+The app remembers the radio and connects automatically the next time. If the
+connection drops, it reconnects by itself.
 
-- **Akser:** hver av de 8 aksene (X, Y, Z, Rx, Ry, Rz, Slider, Dial) kan hente verdien
-  fra en valgfri kanal, og kan inverteres. 988–2012 µs fra radioen blir fullt utslag.
-- **Knapper:** en bryterkanal kan gjøres om til joystick-knapper. En knapp er trykket
-  så lenge kanalen står i valgt posisjon: lav (≤ 1300 µs), midt eller høy (≥ 1700 µs).
-  En treveisbryter blir altså tre knapper på samme kanal.
-- **Tap av signal:** etter 0,5 s uten data sentreres aksene og knappene slippes
-  (kan endres til «behold siste verdier»).
+### Channels, axes and buttons
 
-Knappen **Test i Windows (joy.cpl)** åpner Windows' egen spillkontroller-test.
+- **Axes:** each of the 8 axes (X, Y, Z, Rx, Ry, Rz, Slider, Dial) can take its value
+  from any channel and can be inverted. 988–2012 µs from the radio gives full
+  deflection.
+- **Buttons:** a switch channel can be turned into joystick buttons. A button is
+  pressed for as long as the channel is in the selected position: low (≤ 1300 µs),
+  middle or high (≥ 1700 µs). A three-position switch therefore becomes three buttons
+  on the same channel.
+- **Signal loss:** after 0.5 s without data the axes are centred and the buttons
+  released (can be changed to “keep the last values”).
 
-Innstillingene lagres i `%APPDATA%\EthosBtJoystick\config.json`.
-`EthosBtJoystick.exe --demo` viser vinduet med simulerte kanaler, uten radio.
+The **Test in Windows (joy.cpl)** button opens Windows' own game controller test.
 
-## Hva gjør driverinstallasjonen?
+Settings are stored in `%APPDATA%\EthosBtJoystick\config.json`.
+`EthosBtJoystick.exe --demo` shows the window with simulated channels, without a radio.
 
-En virtuell joystick krever alltid en driver på Windows. Denne er en
-**brukermodus-driver (UMDF 2)** – den kjører som en vanlig prosess (`WUDFHost.exe`)
-og ikke i Windows-kjernen.
+## What does the driver installation do?
 
-Windows installerer bare signerte driverpakker. Når du klikker «Installer driver»
-skjer derfor dette (med administratorrettigheter):
+A virtual joystick always requires a driver on Windows. This one is a
+**user-mode driver (UMDF 2)** – it runs as an ordinary process (`WUDFHost.exe`), not
+in the Windows kernel.
 
-1. Driverpakken pakkes ut til `C:\Program Files\EthosBtJoystick\driver`.
-2. Det lages et selvsignert sertifikat **på din PC**, driverkatalogen signeres med
-   det, og den offentlige delen legges inn som klarert (lagrene *Trusted Root* og
-   *Trusted Publishers* for maskinen).
-3. **Den private nøkkelen slettes med en gang.** Sertifikatet kan dermed aldri brukes
-   til å signere noe annet – verken av deg eller andre.
-4. Enheten `root\EthosBtJoystick` opprettes og driveren installeres på den.
+Windows only installs signed driver packages. When you click “Install driver”, this
+happens (with administrator rights):
 
-**Avinstaller** fjerner enheten, driverpakken og sertifikatet igjen.
-Loggen fra siste installasjon ligger i `C:\Program Files\EthosBtJoystick\install.log`
-og vises også i appen.
+1. The driver package is unpacked to `C:\Program Files\EthosBtJoystick\driver`.
+2. A self-signed certificate is created **on your PC**, the driver catalog is signed
+   with it, and its public part is added as trusted (the machine's *Trusted Root* and
+   *Trusted Publishers* stores).
+3. **The private key is deleted immediately.** The certificate can therefore never be
+   used to sign anything else – neither by you nor by anyone else.
+4. The device `root\EthosBtJoystick` is created and the driver is installed on it.
 
-## Slik virker det
+**Uninstall** removes the device, the driver package and the certificate again.
+The log of the last installation is in `C:\Program Files\EthosBtJoystick\install.log`
+and is also shown in the app.
+
+## How it works
 
 ```
- Ethos-radio                       PC
+ Ethos radio                       PC
 ┌───────────┐  Bluetooth LE   ┌──────────────────────────────────────────────┐
-│ Trainer   │  tjeneste FFF0  │ EthosBtJoystick.exe                          │
-│ (Slave)   │ ──────────────► │  ble.rs       tar imot varsler på FFF6       │
-└───────────┘  karakt. FFF6   │  protocol.rs  dekoder trainer-rammene        │
-                              │  config.rs    kanal → akse/knapp             │
-                              │  joystick.rs  skriver HID-rapport 2 ─────┐   │
+│ Trainer   │  service FFF0   │ EthosBtJoystick.exe                          │
+│ (Slave)   │ ──────────────► │  ble.rs       receives notifications on FFF6 │
+└───────────┘  charact. FFF6  │  protocol.rs  decodes the trainer frames     │
+                              │  config.rs    channel → axis/button          │
+                              │  joystick.rs  writes HID report 2 ───────┐   │
                               └──────────────────────────────────────────┼───┘
                               ┌──────────────────────────────────────────▼───┐
-                              │ ethosjoy.dll (UMDF 2 HID-minidriver)         │
-                              │  leverer dataene som joystick-rapport 1      │
+                              │ ethosjoy.dll (UMDF 2 HID minidriver)         │
+                              │  delivers the data as joystick report 1      │
                               └──────────────────────────────────────────┬───┘
                                                     Windows HID / DirectInput
                                                                          ▼
                                                                     Simulator
 ```
 
-**Protokoll.** Radioen sender rammer som `0x7E <innhold> 0x7E`, der innholdet er
-`0x80`, tre byte per kanalpar (to 12-bits verdier i µs) og en XOR-sjekksum. `0x7D`
-er escape-tegn (neste byte XOR `0x20`). 8 kanaler gir 14 byte, 16 kanaler 26 byte.
-Dette er samme format som i OpenTX/EdgeTX (`bluetooth.cpp`).
+**Protocol.** The radio sends frames as `0x7E <body> 0x7E`, where the body is `0x80`,
+three bytes per channel pair (two 12-bit values in µs) and an XOR checksum. `0x7D` is
+the escape byte (next byte XOR `0x20`). 8 channels give 14 bytes, 16 channels 26 bytes.
+This is the same format as in OpenTX/EdgeTX (`bluetooth.cpp`).
 
-**Driver.** Driveren har to HID-samlinger: selve joysticken (det simulatoren ser) og
-en leverandørdefinert kontrollsamling som appen skriver til. Den inneholder ingen
-logikk utover å videreformidle verdiene.
+**Driver.** The driver has two HID collections: the joystick itself (what the
+simulator sees) and a vendor-defined control collection that the app writes to. It
+contains no logic beyond passing the values on.
 
-## Bygge selv
+## Building
 
-Krav: Rust (stable, `x86_64-pc-windows-msvc`) og Visual Studio 2022 Build Tools med
-C++-verktøy og Windows SDK.
+Requirements: Rust (stable, `x86_64-pc-windows-msvc`) and Visual Studio 2022 Build
+Tools with the C++ tools and a Windows SDK.
 
 ```powershell
-# én gang: hent Microsofts WDK (ca. 111 MB) til tools\wdk-nuget – installerer ingenting
+# once: fetch Microsoft's WDK (about 111 MB) into tools\wdk-nuget – installs nothing
 powershell -ExecutionPolicy Bypass -File tools\get-wdk.ps1
 
-# bygg driver + app (legg til -Test for å kjøre enhetstestene)
+# build driver + app (add -Test to run the unit tests)
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Resultatet havner i `dist\EthosBtJoystick.exe`.
+The result ends up in `dist\EthosBtJoystick.exe`.
 
-| Mappe | Innhold |
+| Folder | Contents |
 | --- | --- |
-| `app\` | Appen (Rust, egui). `cargo test` kjører enhetstestene. |
-| `driver\` | Driveren (C), INF-fil og byggeskript. |
-| `tools\` | Skript for å hente WDK. |
-| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag) og `joycheck` (skriver til den installerte driveren og leser tilbake). |
+| `app\` | The app (Rust, egui). `cargo test` runs the unit tests. |
+| `driver\` | The driver (C), INF file and build script. |
+| `tools\` | Script that fetches the WDK. |
+| `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup) and `joycheck` (writes to the installed driver and reads back). |
 
-## Feilsøking
+## Troubleshooting
 
-- **Radioen dukker ikke opp i listen:** sjekk at Bluetooth-trainer står på *Slave* og
-  er slått på, og at Bluetooth er på i Windows. Radioer merkes med «FrSky» i listen.
-  Kryss eventuelt av for «Vis enheter uten navn».
-- **«Tilkoblet, venter på data»:** radioen er tilkoblet, men sender ikke
-  trainer-rammer. Sjekk trainer-oppsettet på modellen.
-- **Driveren «startet ikke (kode …)»:** åpne installasjonsloggen i appen. Prøv
-  «Installer på nytt». Koden er den samme som Enhetsbehandling viser.
-- **Simulatoren finner ikke joysticken:** sjekk først med «Test i Windows (joy.cpl)».
-  Noen simulatorer må startes på nytt etter at driveren er installert.
+- **The radio does not show up in the list:** check that the Bluetooth trainer is set
+  to *Slave* and enabled, and that Bluetooth is on in Windows. Radios are marked
+  “FrSky” in the list. If needed, tick “Show unnamed devices”.
+- **“Connected, waiting for data”:** the radio is connected but is not sending trainer
+  frames. Check the trainer setup of the model.
+- **The driver “did not start (code …)”:** open the installation log in the app. Try
+  “Reinstall”. The code is the same one Device Manager shows.
+- **The simulator does not find the joystick:** check with “Test in Windows (joy.cpl)”
+  first. Some simulators have to be restarted after the driver has been installed.
 
-## Begrensninger
+## Limitations
 
-- Driveren krever **Windows 11** (64-bit). Prosjektet er bare bygget og prøvd på Windows 11.
-- Smart App Control eller bedriftspolicyer som blokkerer usignerte programmer kan
-  stoppe både appen og driveren.
+- The driver requires **Windows 11** (64-bit). The project has only been built and
+  tried on Windows 11.
+- Smart App Control or company policies that block unsigned programs can stop both
+  the app and the driver.
 
-## Takk til
+## Thanks to
 
 - [FrSky-Bluetooth-Trainer](https://github.com/garfield2412/FrSky-Bluetooth-Trainer)
-  for inspirasjon og bekreftelse på rammeformatet fra Ethos.
-- OpenTX/EdgeTX for den opprinnelige Bluetooth-trainer-protokollen.
-- Microsofts driver-eksempel `vhidmini2`, som forespørselshåndteringen i driveren er
-  avledet av.
+  for inspiration and for confirming the frame format used by Ethos.
+- OpenTX/EdgeTX for the original Bluetooth trainer protocol.
+- Microsoft's driver sample `vhidmini2`, from which the request handling in the driver
+  is derived.
 
-## Lisens
+## License
 
-- Prosjektet er lisensiert under **MIT-lisensen**, se [LICENSE](LICENSE).
-- Unntak: innholdet i mappen `driver/` er avledet av Microsofts eksempel `vhidmini2`
-  og er lisensiert under **Microsoft Public License (MS-PL)**, se
-  [driver/LICENSE](driver/LICENSE).
+- The project is licensed under the **MIT License**, see [LICENSE](LICENSE).
+- Exception: the contents of the `driver/` folder are derived from Microsoft's
+  `vhidmini2` sample and are licensed under the **Microsoft Public License (MS-PL)**,
+  see [driver/LICENSE](driver/LICENSE).
 
-Dette er et uavhengig hobbyprosjekt og har ingen tilknytning til FrSky. FrSky og
-ETHOS er varemerker som tilhører sine respektive eiere.
+This is an independent hobby project and is not affiliated with FrSky. FrSky and ETHOS
+are trademarks of their respective owners.
