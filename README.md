@@ -13,9 +13,7 @@ Everything is in **a single exe file**. Neither vJoy nor any other third-party d
 is used: the virtual joystick is a small driver of its own that is embedded in the exe
 and installed with one click.
 
-![Screenshot](docs/skjermbilde.png)
-
-*The screenshot shows the Norwegian interface. The app is also available in English.*
+![Screenshot](docs/screenshot.png)
 
 ## Getting started
 
