@@ -74,10 +74,52 @@ struct App {
     driver_status: DriverStatus,
     driver_checked: Instant,
     driver_job: Option<Receiver<Outcome>>,
-    /// Result of the last install / uninstall: (success, message).
-    driver_message: Option<(bool, String)>,
+    /// Result of the last install / uninstall attempt.
+    driver_note: Option<DriverNote>,
     driver_log: String,
     demo: bool,
+}
+
+/// What happened to the last driver install / uninstall. Kept as data rather
+/// than text, so the message follows the selected language.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DriverNote {
+    Finished { action: Action, success: bool },
+    /// The user answered "No" in the UAC prompt.
+    Cancelled,
+    /// The elevated helper could not be started (message from Windows).
+    LaunchFailed(String),
+}
+
+impl DriverNote {
+    fn success(&self) -> bool {
+        matches!(self, DriverNote::Finished { success: true, .. })
+    }
+
+    fn text(&self, lang: Lang) -> String {
+        match self {
+            DriverNote::Finished { action: Action::Install, success: true } => {
+                tr(lang, "Driveren er installert.", "The driver is installed.").to_string()
+            }
+            DriverNote::Finished { action: Action::Install, success: false } => tr(
+                lang,
+                "Installasjonen feilet – se loggen under.",
+                "The installation failed – see the log below.",
+            )
+            .to_string(),
+            DriverNote::Finished { action: Action::Uninstall, success: true } => {
+                tr(lang, "Driveren er fjernet.", "The driver has been removed.").to_string()
+            }
+            DriverNote::Finished { action: Action::Uninstall, success: false } => tr(
+                lang,
+                "Avinstalleringen feilet – se loggen under.",
+                "The removal failed – see the log below.",
+            )
+            .to_string(),
+            DriverNote::Cancelled => tr(lang, "Avbrutt.", "Cancelled.").to_string(),
+            DriverNote::LaunchFailed(error) => error.clone(),
+        }
+    }
 }
 
 impl App {
@@ -97,7 +139,7 @@ impl App {
             driver_status: driver_status(),
             driver_checked: Instant::now(),
             driver_job: None,
-            driver_message: None,
+            driver_note: None,
             driver_log: String::new(),
             demo,
         };
@@ -125,26 +167,11 @@ impl App {
     fn poll_background(&mut self) {
         if let Some(job) = &self.driver_job {
             if let Ok(outcome) = job.try_recv() {
-                let lang = self.config.language;
                 self.driver_job = None;
                 self.bridge.suspend_joystick(false);
                 self.driver_status = driver_status();
                 self.driver_checked = Instant::now();
-                let message = match (outcome.action, outcome.success) {
-                    (Action::Install, true) => tr(lang, "Driveren er installert.", "The driver is installed."),
-                    (Action::Install, false) => tr(
-                        lang,
-                        "Installasjonen feilet – se loggen under.",
-                        "The installation failed – see the log below.",
-                    ),
-                    (Action::Uninstall, true) => tr(lang, "Driveren er fjernet.", "The driver has been removed."),
-                    (Action::Uninstall, false) => tr(
-                        lang,
-                        "Avinstalleringen feilet – se loggen under.",
-                        "The removal failed – see the log below.",
-                    ),
-                };
-                self.driver_message = Some((outcome.success, message.to_string()));
+                self.driver_note = Some(DriverNote::Finished { action: outcome.action, success: outcome.success });
                 self.driver_log = outcome.log;
             }
         } else if self.driver_checked.elapsed() > Duration::from_secs(3) {
@@ -154,7 +181,6 @@ impl App {
     }
 
     fn start_driver_job(&mut self, action: Action, ctx: &egui::Context) {
-        let lang = self.config.language;
         // close our handle so Windows can replace / remove the device
         self.bridge.suspend_joystick(true);
         match installer::launch_elevated(action) {
@@ -166,15 +192,15 @@ impl App {
                     ctx.request_repaint();
                 });
                 self.driver_job = Some(rx);
-                self.driver_message = None;
+                self.driver_note = None;
             }
             Err(LaunchError::Cancelled) => {
                 self.bridge.suspend_joystick(false);
-                self.driver_message = Some((false, tr(lang, "Avbrutt.", "Cancelled.").to_string()));
+                self.driver_note = Some(DriverNote::Cancelled);
             }
             Err(LaunchError::Other(error)) => {
                 self.bridge.suspend_joystick(false);
-                self.driver_message = Some((false, error));
+                self.driver_note = Some(DriverNote::LaunchFailed(error));
             }
         }
     }
@@ -424,8 +450,8 @@ impl App {
             let _ = std::process::Command::new("control.exe").arg("joy.cpl").spawn();
         }
 
-        if let Some((success, message)) = &self.driver_message {
-            ui.label(RichText::new(message).color(if *success { GREEN } else { RED }));
+        if let Some(note) = &self.driver_note {
+            ui.label(RichText::new(note.text(lang)).color(if note.success() { GREEN } else { RED }));
         }
         if self.driver_status == DriverStatus::NotInstalled && !busy {
             ui.label(
@@ -440,7 +466,7 @@ impl App {
         if !self.driver_log.is_empty() {
             egui::CollapsingHeader::new(tr(lang, "Installasjonslogg", "Installation log"))
                 .id_salt("driver_log")
-                .default_open(self.driver_message.as_ref().is_some_and(|(success, _)| !success))
+                .default_open(self.driver_note.as_ref().is_some_and(|note| !note.success()))
                 .show(ui, |ui| {
                     egui::ScrollArea::both().id_salt("driver_log_scroll").max_height(160.0).show(ui, |ui| {
                         ui.add(egui::Label::new(RichText::new(&self.driver_log).monospace().small()).selectable(true));
@@ -908,4 +934,25 @@ fn spawn_demo(bridge: Arc<Bridge>) {
             std::thread::sleep(Duration::from_millis(20));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn driver_note_follows_the_language() {
+        let note = DriverNote::Finished { action: Action::Install, success: true };
+        assert_eq!(note.text(Lang::No), "Driveren er installert.");
+        assert_eq!(note.text(Lang::En), "The driver is installed.");
+        assert!(note.success());
+
+        let failed = DriverNote::Finished { action: Action::Uninstall, success: false };
+        assert!(!failed.success());
+        assert_ne!(failed.text(Lang::No), failed.text(Lang::En));
+
+        assert!(!DriverNote::Cancelled.success());
+        assert_eq!(DriverNote::Cancelled.text(Lang::En), "Cancelled.");
+        assert_eq!(DriverNote::LaunchFailed("x".into()).text(Lang::No), "x");
+    }
 }
