@@ -56,6 +56,12 @@ hvorfor en forbindelse oppfører seg dårlig:
 - **Kopier diagnostikk** legger alt dette på utklippstavlen som tekst, uten
   Bluetooth-adresser, klart til å limes inn i en e-post eller feilrapport.
 
+Appen ber Windows om raskest mulig forbindelse til radioen. På PC-en dette ble målt
+på, kortet det ned forbindelsesintervallet fra 44 ms til 15 ms: alle 100 rammene i
+sekundet kommer fram i stedet for rundt 90, og de lengste oppholdene krymper fra
+rundt 100 ms til rundt 30 ms. Blir en forbindelse mindre stabil av det, slår du av
+**Be Windows om raskest mulig forbindelse** i fanen Diagnose.
+
 ### Kanaler, akser og knapper
 
 - **Akser:** hver av de 8 aksene (X, Y, Z, Rx, Ry, Rz, Slider, Dial) kan hente verdien

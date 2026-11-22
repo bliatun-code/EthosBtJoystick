@@ -59,6 +59,12 @@ a connection misbehaves:
 - **Copy diagnostics** puts all of this on the clipboard as text, without Bluetooth
   addresses, ready to paste into an e-mail or a bug report.
 
+The app asks Windows for the fastest connection to the radio. On the PC this was
+measured on, that shortened the connection interval from 44 ms to 15 ms: all 100
+frames a second arrive instead of about 90, and the longest pauses shrink from about
+100 ms to about 30 ms. If a connection becomes less stable with it, switch off **Ask
+Windows for the fastest connection** on the Diagnostics tab.
+
 ### Channels, axes and buttons
 
 - **Axes:** each of the 8 axes (X, Y, Z, Rx, Ry, Rz, Slider, Dial) can take its value

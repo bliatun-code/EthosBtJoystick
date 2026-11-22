@@ -335,23 +335,33 @@ pub fn show(
     });
 
     ui.add_space(6.0);
-    if ui
-        .checkbox(
-            &mut config.fast_connection,
-            tr(
-                lang,
-                "Be Windows om raskest mulig forbindelse (eksperimentelt, gjelder fra neste tilkobling)",
-                "Ask Windows for the fastest connection (experimental, applies from the next connection)",
-            ),
-        )
-        .on_hover_text(tr(
+    // (the app passes a change on to the Bluetooth worker)
+    ui.checkbox(
+        &mut config.fast_connection,
+        tr(
             lang,
-            "Kan gi høyere oppdateringsfrekvens. Slå av igjen hvis forbindelsen blir mindre stabil.",
-            "May give a higher update rate. Switch it off again if the connection becomes less stable.",
-        ))
-        .changed()
-    {
-        // picked up by the app, which passes it on to the Bluetooth worker
+            "Be Windows om raskest mulig forbindelse (gjelder fra neste tilkobling)",
+            "Ask Windows for the fastest connection (applies from the next connection)",
+        ),
+    )
+    .on_hover_text(tr(
+        lang,
+        "Gir kortere forsinkelse og færre tapte rammer. Slå av hvis forbindelsen blir mindre stabil.",
+        "Gives a shorter delay and fewer lost frames. Switch it off if the connection becomes less stable.",
+    ));
+    // asked for, but the connection is still on a long interval
+    let slow_anyway = config.fast_connection
+        && snap.link == LinkState::Receiving
+        && snap.connection.is_some_and(|connection| connection.interval_ms() >= 25.0);
+    if slow_anyway {
+        ui.label(
+            RichText::new(tr(
+                lang,
+                "Windows eller radioen har ikke gått over til et kort intervall. Prøv å koble fra og til igjen.",
+                "Windows or the radio has not moved to a short interval. Try disconnecting and connecting again.",
+            ))
+            .weak(),
+        );
     }
 
     // ---- the adapter ----
