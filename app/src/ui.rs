@@ -12,7 +12,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::autostart;
 use crate::ble::{self, BleHandle, Command};
-use crate::bridge::{Bridge, LinkError, LinkState, Snapshot};
+use crate::bridge::{Bridge, ConnectionInfo, LinkError, LinkState, Snapshot};
 use crate::diag::{EventKind, LinkQuality};
 use crate::tray::{self, CloseFlags, Tray, TrayHandle};
 use crate::ui_diag;
@@ -1209,25 +1209,38 @@ fn app_icon() -> egui::IconData {
 }
 
 /// Demo mode (`--demo`): feeds synthetic 16 channel frames through the real
-/// decoder so the window can be tried without a radio.
+/// decoder so the window can be tried without a radio. It goes through the
+/// same steps as a real connection, so the Diagnostics tab has something to show.
 fn spawn_demo(bridge: Arc<Bridge>, weak: bool) {
     std::thread::spawn(move || {
         bridge.log(EventKind::Target("Demo".into()));
         bridge.begin_connection("Demo");
-        bridge.connection_established(0);
+        bridge.set_link(LinkState::Connecting, None);
+        let connecting = Instant::now();
+        std::thread::sleep(Duration::from_millis(900));
+        bridge.log(EventKind::FastRequested { accepted: true });
+        bridge.connection_established(connecting.elapsed().as_millis() as u32);
+        // what Windows reports for a radio once it has granted the fast
+        // interval: 15 ms, 1M PHY, 2 s supervision timeout
+        bridge.set_connection_info(ConnectionInfo { interval_units: 12, latency: 0, timeout_units: 200, phy: 1 });
         bridge.set_link(LinkState::Connected, None);
 
         let mut decoder = FrameDecoder::new();
         let start = Instant::now();
+        let mut deadline = start;
         let mut frame_number = 0u32;
         loop {
+            // A good link: the radio's 100 frames a second arrive one or two
+            // at a time, once per 15 ms connection interval.
             // A weak signal: after two good seconds, frames arrive in short
             // bursts with pauses in between (packets lost and sent again).
             frame_number += 1;
             let pause = if weak && start.elapsed() > Duration::from_secs(2) {
                 if frame_number % 5 == 0 { 85 } else { 4 }
+            } else if frame_number % 3 == 0 {
+                0
             } else {
-                12
+                15
             };
             let t = start.elapsed().as_secs_f32();
             let mut channels = [US_CENTER; 16];
@@ -1241,7 +1254,15 @@ fn spawn_demo(bridge: Arc<Bridge>, weak: bool) {
                 *channel = [US_MIN, US_CENTER, US_MAX][step];
             }
             decoder.push(&encode_frame(&channels), |frame| bridge.on_frame(frame));
-            std::thread::sleep(Duration::from_millis(pause));
+
+            // Sleep towards a deadline so the rate stays exact however coarse
+            // the timer is; start over if the PC was asleep in between.
+            deadline += Duration::from_millis(pause);
+            let now = Instant::now();
+            if now > deadline + Duration::from_secs(1) {
+                deadline = now;
+            }
+            std::thread::sleep(deadline.saturating_duration_since(now));
         }
     });
 }
