@@ -9,6 +9,7 @@
 //! Close the app first - its keep-alive would defeat the watchdog test.
 //!
 //!     cargo run --example joycheck
+//!     cargo run --example joycheck -- --read     (only print the current state)
 
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,18 @@ use ethos_bt_joystick::joystick::{
 };
 
 fn main() {
+    // `--read`: only print what the joystick reports right now
+    if std::env::args().any(|arg| arg == "--read") {
+        match read_joystick_state() {
+            Ok(state) => {
+                let neutral = if state == JoyState::NEUTRAL { "neutral" } else { "NOT neutral" };
+                println!("{neutral}: axes {:?}  buttons {:#010x}", state.axes, state.buttons);
+            }
+            Err(error) => fail(&format!("cannot read the joystick: {error}")),
+        }
+        return;
+    }
+
     println!("device node:    {:?}", driver_status());
 
     let before = match read_joystick_state() {
