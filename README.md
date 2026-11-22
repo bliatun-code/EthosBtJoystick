@@ -48,6 +48,8 @@ connection drops, it reconnects by itself.
 The **Diagnostics** tab shows how good the Bluetooth link is, and helps to find out why
 a connection misbehaves:
 
+![The Diagnostics tab](docs/diagnostics.png)
+
 - **Link quality** – good, weak or poor, judged from the *average delay*: how old the
   newest stick positions are on average. Bluetooth delivers the frames in bursts, so
   this says more about the response than the frame rate does. The same verdict is
@@ -180,6 +182,9 @@ also creates a draft release with the zip attached.
   “Reinstall”. The code is the same one Device Manager shows.
 - **The simulator does not find the joystick:** check with “Test in Windows (joy.cpl)”
   first. Some simulators have to be restarted after the driver has been installed.
+
+Still stuck? [Open an issue](https://github.com/bliatun-code/EthosBtJoystick/issues/new/choose)
+and paste the text from **Copy diagnostics** on the Diagnostics tab.
 
 ## Limitations
 

@@ -47,6 +47,8 @@ kobles det til igjen av seg selv.
 Fanen **Diagnose** viser hvor god Bluetooth-forbindelsen er, og hjelper deg å finne ut
 hvorfor en forbindelse oppfører seg dårlig:
 
+![Fanen Diagnose](docs/diagnose.png)
+
 - **Kvalitet** – god, svak eller dårlig, vurdert ut fra *forsinkelsen i snitt*: hvor
   gamle de nyeste spakverdiene er i gjennomsnitt. Bluetooth leverer rammene i klumper,
   så dette sier mer om responsen enn oppdateringsfrekvensen gjør. Samme vurdering
@@ -176,6 +178,10 @@ tillegg et utkast til release med zip-filen vedlagt.
   «Installer på nytt». Koden er den samme som Enhetsbehandling viser.
 - **Simulatoren finner ikke joysticken:** sjekk først med «Test i Windows (joy.cpl)».
   Noen simulatorer må startes på nytt etter at driveren er installert.
+
+Står du fortsatt fast? [Opprett en sak (issue)](https://github.com/bliatun-code/EthosBtJoystick/issues/new/choose)
+og lim inn teksten fra **Kopier diagnostikk** i fanen Diagnose. Skjemaet er på engelsk,
+men du kan gjerne skrive på norsk.
 
 ## Begrensninger
 

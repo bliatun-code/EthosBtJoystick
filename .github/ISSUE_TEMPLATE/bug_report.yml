@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem. You can write in English or Norwegian.
+
+        Please look at [Troubleshooting](https://github.com/bliatun-code/EthosBtJoystick#troubleshooting) in the README first – it covers the most common problems.
+
+        Issues are public, so read through what you paste before you submit it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        In the app, open the **Diagnostics** tab, click **Copy diagnostics** and paste the text here. It contains no Bluetooth addresses.
+        If you can, copy it while the problem is happening or right after it.
+        If the program does not start at all, leave this empty and say so above.
+      render: text
+
+  - type: input
+    id: radio
+    attributes:
+      label: Radio and Ethos version
+      placeholder: X20S, Ethos 1.6.3
+
+  - type: input
+    id: simulator
+    attributes:
+      label: Simulator
+      description: Only if the problem is about how the joystick behaves in a simulator.
+
+  - type: textarea
+    id: install-log
+    attributes:
+      label: Installation log
+      description: |
+        Only for problems with installing or starting the driver: paste the installation log that the app shows.
+        It is also stored in `C:\Program Files\EthosBtJoystick\install.log`.
+      render: text
