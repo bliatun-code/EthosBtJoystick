@@ -8,9 +8,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::adapter::AdapterInfo;
 use crate::config::{Failsafe, Mapping};
+use crate::diag::{self, DropReason, Event, EventKind, EventLog, FrameStats, LinkQuality, Second};
 use crate::joystick::{JoyState, VirtualJoystick, KEEPALIVE_INTERVAL};
 use crate::protocol::{Frame, MAX_CHANNELS};
+use crate::util::local_time;
 
 /// Called when something the GUI shows has changed (not for every frame).
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -88,6 +91,53 @@ pub struct Snapshot {
     pub joystick_open: bool,
     /// Version of the installed driver (when the joystick is open).
     pub driver_version: Option<u16>,
+
+    // diagnostics
+    /// Verdict on the link (`None` while not receiving or still measuring).
+    pub quality: Option<LinkQuality>,
+    /// Best single second of this connection (frames).
+    pub best_rate: f32,
+    /// Times per second that new data arrives. Bluetooth delivers frames in
+    /// bursts, so this can be far below the frame rate.
+    pub update_rate: f32,
+    /// Average age of the newest data (what the verdict is based on), in ms.
+    pub age_ms: f32,
+    /// Longest pause between frames in the last few seconds.
+    pub max_gap_ms: f32,
+    /// Frames per second for the last half minute, oldest first.
+    pub history: Vec<Second>,
+    pub events: Vec<Event>,
+    /// The link keeps dropping after a few seconds (adapter / driver trouble).
+    pub quick_drops: bool,
+    pub adapter: Option<AdapterInfo>,
+    pub connection: Option<ConnectionInfo>,
+}
+
+/// What Windows and the radio agreed on for the current connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionInfo {
+    /// Connection interval in units of 1.25 ms.
+    pub interval_units: u16,
+    pub latency: u16,
+    /// Supervision timeout in units of 10 ms.
+    pub timeout_units: u16,
+    /// 1 = 1M, 2 = 2M, 3 = coded (long range), 0 = unknown.
+    pub phy: u8,
+}
+
+impl ConnectionInfo {
+    pub fn interval_ms(&self) -> f32 {
+        self.interval_units as f32 * 1.25
+    }
+
+    pub fn phy_name(&self) -> &'static str {
+        match self.phy {
+            1 => "1M",
+            2 => "2M",
+            3 => "Coded",
+            _ => "?",
+        }
+    }
 }
 
 struct Inner {
@@ -109,13 +159,23 @@ struct Inner {
     last_frame: Option<Instant>,
     frames_total: u64,
     bad_frames: u64,
-    frame_rate: f32,
-    rate_start: Instant,
-    rate_count: u32,
 
     output: JoyState,
     /// When the joystick was last written (for the keep-alive).
     last_write: Instant,
+
+    // diagnostics
+    stats: FrameStats,
+    events: EventLog,
+    /// Frames received in the current connection.
+    connection_frames: u64,
+    /// When the current connection was established.
+    connected_at: Option<Instant>,
+    /// When the frames stopped (while in `SignalLost`).
+    signal_lost_at: Option<Instant>,
+    adapter: Option<AdapterInfo>,
+    connection: Option<ConnectionInfo>,
+    fast_connection: bool,
 }
 
 impl Inner {
@@ -155,11 +215,16 @@ impl Bridge {
                 last_frame: None,
                 frames_total: 0,
                 bad_frames: 0,
-                frame_rate: 0.0,
-                rate_start: Instant::now(),
-                rate_count: 0,
                 output: JoyState::NEUTRAL,
                 last_write: Instant::now(),
+                stats: FrameStats::new(Instant::now()),
+                events: EventLog::default(),
+                connection_frames: 0,
+                connected_at: None,
+                signal_lost_at: None,
+                adapter: None,
+                connection: None,
+                fast_connection: false,
             }),
         }
     }
@@ -212,9 +277,23 @@ impl Bridge {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        let inner = self.lock();
+        let mut inner = self.lock();
+        let now = Instant::now();
         let receiving = inner.last_frame.is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
+        let summary = inner.stats.summary(now);
+        let live = matches!(inner.link, LinkState::Receiving | LinkState::SignalLost);
         Snapshot {
+            quality: if live { summary.quality } else { None },
+            best_rate: summary.best_rate,
+            update_rate: if receiving { summary.update_rate } else { 0.0 },
+            age_ms: summary.age_ms,
+            max_gap_ms: summary.max_gap_ms,
+            history: summary.history,
+            events: inner.events.events().to_vec(),
+            quick_drops: diag::repeated_quick_drops(inner.events.events(), now),
+            adapter: inner.adapter.clone(),
+            connection: inner.connection,
+            frame_rate: if receiving { summary.rate } else { 0.0 },
             link: inner.link,
             link_error: inner.link_error.clone(),
             device_name: inner.device_name.clone(),
@@ -225,7 +304,6 @@ impl Bridge {
             channel_count: inner.channel_count,
             frames_total: inner.frames_total,
             bad_frames: inner.bad_frames,
-            frame_rate: if receiving { inner.frame_rate } else { 0.0 },
             output: inner.output,
             joystick_open: inner.joystick.is_some(),
             driver_version: inner.joystick.as_ref().map(|joystick| joystick.driver_version()),
@@ -243,17 +321,23 @@ impl Bridge {
         inner.channel_count = frame.count;
         inner.last_frame = Some(now);
         inner.frames_total += 1;
-
-        inner.rate_count += 1;
-        let elapsed = now.duration_since(inner.rate_start);
-        if elapsed >= Duration::from_secs(1) {
-            inner.frame_rate = inner.rate_count as f32 / elapsed.as_secs_f32();
-            inner.rate_start = now;
-            inner.rate_count = 0;
-        }
+        inner.connection_frames += 1;
+        inner.stats.on_frame(now);
 
         let resumed = matches!(inner.link, LinkState::Connected | LinkState::SignalLost);
         if resumed {
+            match (inner.link, inner.signal_lost_at.take()) {
+                (LinkState::SignalLost, Some(lost)) => {
+                    let gap_ms = now.saturating_duration_since(lost).as_millis() as u32;
+                    inner.events.push(local_time(), now, EventKind::SignalBack { gap_ms });
+                }
+                _ => {
+                    let after_ms =
+                        inner.connected_at.map_or(0, |t| now.saturating_duration_since(t).as_millis() as u32);
+                    let channels = frame.count as u8;
+                    inner.events.push(local_time(), now, EventKind::FirstData { after_ms, channels });
+                }
+            }
             inner.link = LinkState::Receiving;
             inner.link_error = None;
         }
@@ -282,6 +366,10 @@ impl Bridge {
         let changed = inner.link == LinkState::Receiving;
         if changed {
             inner.link = LinkState::SignalLost;
+            // the pause started when the last frame arrived
+            let now = Instant::now();
+            inner.signal_lost_at = inner.last_frame.or(Some(now));
+            inner.events.push(local_time(), now, EventKind::SignalLost);
         }
         if inner.mapping.failsafe == Failsafe::Center && inner.output != JoyState::NEUTRAL {
             inner.write_output(JoyState::NEUTRAL);
@@ -327,9 +415,82 @@ impl Bridge {
         let mut inner = self.lock();
         inner.device_name = name.to_string();
         inner.last_frame = None;
-        inner.frame_rate = 0.0;
-        inner.rate_start = Instant::now();
-        inner.rate_count = 0;
+        inner.stats = FrameStats::new(Instant::now());
+        inner.connection_frames = 0;
+        inner.connected_at = None;
+        inner.signal_lost_at = None;
+        inner.connection = None;
+    }
+
+    // ---- diagnostics -----------------------------------------------------
+
+    /// Adds an entry to the connection event log.
+    pub fn log(&self, kind: EventKind) {
+        self.lock().events.push(local_time(), Instant::now(), kind);
+        self.notify();
+    }
+
+    pub fn clear_events(&self) {
+        self.lock().events.clear();
+    }
+
+    /// The attempt succeeded: the link is up and subscribed.
+    pub fn connection_established(&self, setup_ms: u32) {
+        let mut inner = self.lock();
+        let now = Instant::now();
+        inner.connected_at = Some(now);
+        inner.stats = FrameStats::new(now);
+        inner.events.push(local_time(), now, EventKind::Connected { setup_ms });
+    }
+
+    /// The connection ended; logs how long it lasted.
+    pub fn connection_ended(&self, reason: DropReason) {
+        let mut inner = self.lock();
+        let now = Instant::now();
+        if let Some(connected_at) = inner.connected_at.take() {
+            let kind = EventKind::Disconnected {
+                reason,
+                lasted: now.saturating_duration_since(connected_at),
+                frames: inner.connection_frames,
+            };
+            inner.events.push(local_time(), now, kind);
+        }
+        inner.connection = None;
+        inner.signal_lost_at = None;
+    }
+
+    pub fn set_adapter(&self, adapter: AdapterInfo) {
+        self.lock().adapter = Some(adapter);
+        self.notify();
+    }
+
+    /// Stores what Windows reports for the current connection; logs it when it
+    /// is new or has changed.
+    pub fn set_connection_info(&self, info: ConnectionInfo) {
+        let mut inner = self.lock();
+        let changed = inner.connection.map_or(true, |old| {
+            (old.interval_units, old.latency, old.timeout_units) != (info.interval_units, info.latency, info.timeout_units)
+        });
+        inner.connection = Some(info);
+        if changed {
+            let kind = EventKind::Parameters {
+                interval_units: info.interval_units,
+                latency: info.latency,
+                timeout_ms: info.timeout_units as u32 * 10,
+            };
+            inner.events.push(local_time(), Instant::now(), kind);
+        }
+        drop(inner);
+        self.notify();
+    }
+
+    /// Ask Windows for the fastest connection interval when connecting.
+    pub fn fast_connection(&self) -> bool {
+        self.lock().fast_connection
+    }
+
+    pub fn set_fast_connection(&self, enabled: bool) {
+        self.lock().fast_connection = enabled;
     }
 
     // ---- joystick --------------------------------------------------------

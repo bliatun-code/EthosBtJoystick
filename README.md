@@ -20,7 +20,7 @@ and installed with one click.
 ## Getting started
 
 1. **On the radio:** `Model > Trainer`, add a Bluetooth link, enable it and select
-   **Slave** (CH1–CH8 or CH1–CH16).
+   **Slave** (for example CH1–CH8 or CH1–CH16).
 2. Download the zip from the
    [latest release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
    extract it and start `EthosBtJoystick.exe`. Windows may warn about an unknown
@@ -42,6 +42,28 @@ connection drops, it reconnects by itself.
   running when you close its window. Click the icon to open the window again;
   right-click it to exit.
 - Starting the program a second time just brings the running one to the front.
+
+### Diagnostics
+
+The **Diagnostics** tab shows how good the Bluetooth link is, and helps to find out why
+a connection misbehaves:
+
+- **Link quality** – good, weak or poor, judged from the *average delay*: how old the
+  newest stick positions are on average. Bluetooth delivers the frames in bursts, so
+  this says more about the response than the frame rate does. The same verdict is
+  shown next to the frame rate on the left.
+- **Events** – every connection and disconnection, with the reason and how long the
+  connection lasted.
+- **The PC's Bluetooth adapter** – its name, Bluetooth version and the age of its
+  driver.
+- **Copy diagnostics** puts all of this on the clipboard as text, without Bluetooth
+  addresses, ready to paste into an e-mail or a bug report.
+
+The app asks Windows for the fastest connection to the radio. On the PC this was
+measured on, that shortened the connection interval from 44 ms to 15 ms: all 100
+frames a second arrive instead of about 90, and the longest pauses shrink from about
+100 ms to about 30 ms. If a connection becomes less stable with it, switch off **Ask
+Windows for the fastest connection** on the Diagnostics tab.
 
 ### Channels, axes and buttons
 
@@ -138,7 +160,7 @@ also creates a draft release with the zip attached.
 | `app\` | The app (Rust, egui). `cargo test` runs the unit tests. |
 | `driver\` | The driver (C), INF file and build script. |
 | `tools\` | Scripts that fetch the WDK and package a release. |
-| `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup) and `joycheck` (writes to the installed driver and reads back). |
+| `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup), `joycheck` (writes to the installed driver and reads back) and `adapterinfo` (prints the diagnostics report). |
 
 ## Troubleshooting
 
@@ -147,6 +169,13 @@ also creates a draft release with the zip attached.
   “FrSky” in the list. If needed, tick “Show unnamed devices”.
 - **“Connected, waiting for data”:** the radio is connected but is not sending trainer
   frames. Check the trainer setup of the model.
+- **Control feels laggy or jerky:** look at the Diagnostics tab. A frame rate well
+  below the best rate together with an average delay above about 35 ms means a weak
+  Bluetooth signal. Move the radio closer, and on a desktop PC check that the antennas
+  of the Wi-Fi/Bluetooth card are fitted – without them the range is very short.
+- **The connection drops after a few seconds, again and again:** that points to the
+  PC's Bluetooth adapter or its driver. Try a newer driver (the Microsoft Update
+  Catalog may have one when Windows Update offers none) or another adapter.
 - **The driver “did not start (code …)”:** open the installation log in the app. Try
   “Reinstall”. The code is the same one Device Manager shows.
 - **The simulator does not find the joystick:** check with “Test in Windows (joy.cpl)”

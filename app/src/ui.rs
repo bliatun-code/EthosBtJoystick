@@ -13,7 +13,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use crate::autostart;
 use crate::ble::{self, BleHandle, Command};
 use crate::bridge::{Bridge, LinkError, LinkState, Snapshot};
+use crate::diag::{EventKind, LinkQuality};
 use crate::tray::{self, CloseFlags, Tray, TrayHandle};
+use crate::ui_diag;
 use crate::config::{
     AxisMap, ButtonMap, Config, Failsafe, Lang, Mapping, SavedDevice, SwitchPos, SELECTABLE_CHANNELS, US_CENTER,
     US_MAX, US_MIN,
@@ -26,29 +28,42 @@ use crate::joystick::{
 use crate::protocol::{encode_frame, FrameDecoder};
 use crate::util::format_address;
 
-const GREEN: Color32 = Color32::from_rgb(0x3F, 0xB9, 0x50);
-const YELLOW: Color32 = Color32::from_rgb(0xD9, 0xA4, 0x1E);
-const RED: Color32 = Color32::from_rgb(0xE5, 0x53, 0x4B);
-const GRAY: Color32 = Color32::from_rgb(0x8B, 0x94, 0x9E);
+pub(crate) const GREEN: Color32 = Color32::from_rgb(0x3F, 0xB9, 0x50);
+pub(crate) const YELLOW: Color32 = Color32::from_rgb(0xD9, 0xA4, 0x1E);
+pub(crate) const RED: Color32 = Color32::from_rgb(0xE5, 0x53, 0x4B);
+pub(crate) const GRAY: Color32 = Color32::from_rgb(0x8B, 0x94, 0x9E);
 const ACCENT: Color32 = Color32::from_rgb(0x3B, 0x8E, 0xEA);
 
 const SIDE_WIDTH: f32 = 320.0;
 
-fn tr<'a>(lang: Lang, no: &'a str, en: &'a str) -> &'a str {
+pub(crate) fn tr<'a>(lang: Lang, no: &'a str, en: &'a str) -> &'a str {
     match lang {
         Lang::No => no,
         Lang::En => en,
     }
 }
 
-/// `minimized`: start with only the tray icon (used by "Start with Windows").
-pub fn run(demo: bool, minimized: bool) -> eframe::Result<()> {
+/// How the program was started (command line switches).
+#[derive(Clone, Copy, Default)]
+pub struct Options {
+    /// `--demo`: simulated channels, no radio needed.
+    pub demo: bool,
+    /// `--demo-weak`: like `--demo`, but with the uneven timing of a weak signal.
+    pub demo_weak: bool,
+    /// `--minimized`: start with only the tray icon (used by "Start with Windows").
+    pub minimized: bool,
+    /// `--diagnostics`: open the Diagnostics tab.
+    pub diagnostics: bool,
+}
+
+pub fn run(start: Options) -> eframe::Result<()> {
+    let (demo, minimized) = (start.demo || start.demo_weak, start.minimized);
     let config = Config::load();
     let bridge = Arc::new(Bridge::new(config.mapping.clone()));
     bridge.start_housekeeping();
     let ble = ble::spawn(bridge.clone());
     if demo {
-        spawn_demo(bridge.clone());
+        spawn_demo(bridge.clone(), start.demo_weak);
     }
 
     let options = eframe::NativeOptions {
@@ -63,7 +78,13 @@ pub fn run(demo: bool, minimized: bool) -> eframe::Result<()> {
     eframe::run_native(
         "Ethos BT Joystick",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, config, bridge, ble, demo, minimized)))),
+        Box::new(move |cc| {
+            let mut app = App::new(cc, config, bridge, ble, demo, minimized);
+            if start.diagnostics {
+                app.tab = Tab::Diagnostics;
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 
@@ -72,6 +93,12 @@ struct DeviceRow {
     name: String,
     rssi: Option<i16>,
     trainer: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Channels,
+    Diagnostics,
 }
 
 struct App {
@@ -89,6 +116,8 @@ struct App {
     driver_note: Option<DriverNote>,
     driver_log: String,
     demo: bool,
+    /// Which page the main area shows.
+    tab: Tab,
 
     /// The main window (0 if it could not be determined).
     main_window: isize,
@@ -166,6 +195,7 @@ impl App {
         // status changes from the Bluetooth / joystick threads redraw the window
         let ctx = cc.egui_ctx.clone();
         bridge.set_wake(move || ctx.request_repaint());
+        bridge.set_fast_connection(config.fast_connection);
 
         let ble = Rc::new(ble);
         let main_window = match cc.window_handle().map(|handle| handle.as_raw()) {
@@ -210,6 +240,7 @@ impl App {
             driver_note: None,
             driver_log: String::new(),
             demo,
+            tab: Tab::Channels,
             main_window,
             tray,
             tray_language,
@@ -332,20 +363,37 @@ impl App {
             LinkState::Connected => {
                 (YELLOW, format!("{name}: {}", tr(lang, "tilkoblet, venter på data", "connected, waiting for data")))
             }
-            LinkState::Receiving => (
-                GREEN,
-                format!(
+            LinkState::Receiving => {
+                // the dot and the last word say how good the link is
+                let mut text = format!(
                     "{name}: {} {} · {:.0} Hz",
                     snap.channel_count,
                     tr(lang, "kanaler", "channels"),
                     snap.frame_rate
-                ),
-            ),
+                );
+                if let Some(quality) = snap.quality {
+                    text.push_str(&format!(" · {}", ui_diag::quality_word(lang, quality)));
+                }
+                (snap.quality.map_or(GREEN, ui_diag::quality_color), text)
+            }
             LinkState::SignalLost => (RED, format!("{name}: {}", tr(lang, "ingen data", "no data"))),
         };
         status_line(ui, color, &text);
         if let Some(error) = &snap.link_error {
             ui.label(RichText::new(link_error_text(lang, error)).color(YELLOW));
+        }
+        if snap.quick_drops {
+            ui.label(RichText::new(ui_diag::quick_drops_text(lang)).color(RED));
+        } else if snap.link == LinkState::Receiving && snap.quality.is_some_and(|quality| quality != LinkQuality::Good)
+        {
+            ui.label(
+                RichText::new(tr(
+                    lang,
+                    "Ujevn forbindelse – se fanen Diagnose.",
+                    "Uneven connection – see the Diagnostics tab.",
+                ))
+                .color(YELLOW),
+            );
         }
 
         ui.add_space(2.0);
@@ -905,12 +953,40 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.tab,
+                    Tab::Channels,
+                    RichText::new(tr(lang, "Kanaler og mapping", "Channels and mapping")).size(15.0),
+                );
+                ui.selectable_value(
+                    &mut self.tab,
+                    Tab::Diagnostics,
+                    RichText::new(tr(lang, "Diagnose", "Diagnostics")).size(15.0),
+                );
+            });
+            ui.separator();
+
             egui::ScrollArea::vertical().id_salt("main_scroll").auto_shrink([false, false]).show(ui, |ui| {
-                self.channels_section(ui, &snap);
-                ui.add_space(12.0);
-                self.axes_section(ui, &snap);
-                ui.add_space(12.0);
-                self.buttons_section(ui, &snap);
+                match self.tab {
+                    Tab::Channels => {
+                        self.channels_section(ui, &snap);
+                        ui.add_space(12.0);
+                        self.axes_section(ui, &snap);
+                        ui.add_space(12.0);
+                        self.buttons_section(ui, &snap);
+                    }
+                    Tab::Diagnostics => {
+                        let mut actions = Vec::new();
+                        ui_diag::show(ui, lang, &snap, &mut self.config, self.driver_status, &mut actions);
+                        for action in actions {
+                            match action {
+                                ui_diag::Action::RefreshAdapter => self.ble.send(Command::RefreshAdapter),
+                                ui_diag::Action::ClearEvents => self.bridge.clear_events(),
+                            }
+                        }
+                    }
+                }
             });
         });
 
@@ -918,6 +994,7 @@ impl eframe::App for App {
             if self.config.mapping != self.saved.mapping {
                 self.bridge.set_mapping(self.config.mapping.clone());
             }
+            self.bridge.set_fast_connection(self.config.fast_connection);
             self.config.save();
             self.saved = self.config.clone();
         }
@@ -1001,7 +1078,7 @@ fn section_title(ui: &mut egui::Ui, number: &str, title: &str) {
     });
 }
 
-fn status_line(ui: &mut egui::Ui, color: Color32, text: &str) {
+pub(crate) fn status_line(ui: &mut egui::Ui, color: Color32, text: &str) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
         ui.painter().circle_filled(rect.center(), 5.0, color);
@@ -1057,7 +1134,7 @@ fn switch_pos_text(lang: Lang, position: SwitchPos) -> &'static str {
     }
 }
 
-fn link_error_text(lang: Lang, error: &LinkError) -> String {
+pub(crate) fn link_error_text(lang: Lang, error: &LinkError) -> String {
     match error {
         LinkError::NotFound => tr(
             lang,
@@ -1133,14 +1210,25 @@ fn app_icon() -> egui::IconData {
 
 /// Demo mode (`--demo`): feeds synthetic 16 channel frames through the real
 /// decoder so the window can be tried without a radio.
-fn spawn_demo(bridge: Arc<Bridge>) {
+fn spawn_demo(bridge: Arc<Bridge>, weak: bool) {
     std::thread::spawn(move || {
+        bridge.log(EventKind::Target("Demo".into()));
         bridge.begin_connection("Demo");
+        bridge.connection_established(0);
         bridge.set_link(LinkState::Connected, None);
 
         let mut decoder = FrameDecoder::new();
         let start = Instant::now();
+        let mut frame_number = 0u32;
         loop {
+            // A weak signal: after two good seconds, frames arrive in short
+            // bursts with pauses in between (packets lost and sent again).
+            frame_number += 1;
+            let pause = if weak && start.elapsed() > Duration::from_secs(2) {
+                if frame_number % 5 == 0 { 85 } else { 4 }
+            } else {
+                12
+            };
             let t = start.elapsed().as_secs_f32();
             let mut channels = [US_CENTER; 16];
             for (i, channel) in channels.iter_mut().enumerate().take(4) {
@@ -1153,7 +1241,7 @@ fn spawn_demo(bridge: Arc<Bridge>) {
                 *channel = [US_MIN, US_CENTER, US_MAX][step];
             }
             decoder.push(&encode_frame(&channels), |frame| bridge.on_frame(frame));
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(pause));
         }
     });
 }

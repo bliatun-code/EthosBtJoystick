@@ -20,7 +20,7 @@ installeres med ett klikk.
 ## Kom i gang
 
 1. **På radioen:** `Model > Trainer`, legg til en Bluetooth-link, slå den på og velg
-   **Slave** (CH1–CH8 eller CH1–CH16).
+   **Slave** (for eksempel CH1–CH8 eller CH1–CH16).
 2. Last ned zip-filen fra
    [siste release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
    pakk den ut og start `EthosBtJoystick.exe`. Windows kan advare om ukjent utgiver
@@ -41,6 +41,26 @@ kobles det til igjen av seg selv.
   når du lukker vinduet. Klikk på ikonet for å åpne vinduet igjen; høyreklikk for å
   avslutte.
 - Starter du programmet en gang til, kommer bare det som allerede kjører fram.
+
+### Diagnose
+
+Fanen **Diagnose** viser hvor god Bluetooth-forbindelsen er, og hjelper deg å finne ut
+hvorfor en forbindelse oppfører seg dårlig:
+
+- **Kvalitet** – god, svak eller dårlig, vurdert ut fra *forsinkelsen i snitt*: hvor
+  gamle de nyeste spakverdiene er i gjennomsnitt. Bluetooth leverer rammene i klumper,
+  så dette sier mer om responsen enn oppdateringsfrekvensen gjør. Samme vurdering
+  står ved siden av frekvensen til venstre.
+- **Hendelser** – hver til- og frakobling, med årsak og hvor lenge forbindelsen varte.
+- **Bluetooth-adapteren i PC-en** – navn, Bluetooth-versjon og alderen på driveren.
+- **Kopier diagnostikk** legger alt dette på utklippstavlen som tekst, uten
+  Bluetooth-adresser, klart til å limes inn i en e-post eller feilrapport.
+
+Appen ber Windows om raskest mulig forbindelse til radioen. På PC-en dette ble målt
+på, kortet det ned forbindelsesintervallet fra 44 ms til 15 ms: alle 100 rammene i
+sekundet kommer fram i stedet for rundt 90, og de lengste oppholdene krymper fra
+rundt 100 ms til rundt 30 ms. Blir en forbindelse mindre stabil av det, slår du av
+**Be Windows om raskest mulig forbindelse** i fanen Diagnose.
 
 ### Kanaler, akser og knapper
 
@@ -135,7 +155,7 @@ tillegg et utkast til release med zip-filen vedlagt.
 | `app\` | Appen (Rust, egui). `cargo test` kjører enhetstestene. |
 | `driver\` | Driveren (C), INF-fil og byggeskript. |
 | `tools\` | Skript for å hente WDK og pakke en release. |
-| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag) og `joycheck` (skriver til den installerte driveren og leser tilbake). |
+| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag), `joycheck` (skriver til den installerte driveren og leser tilbake) og `adapterinfo` (skriver ut diagnoserapporten). |
 
 ## Feilsøking
 
@@ -144,6 +164,14 @@ tillegg et utkast til release med zip-filen vedlagt.
   Kryss eventuelt av for «Vis enheter uten navn».
 - **«Tilkoblet, venter på data»:** radioen er tilkoblet, men sender ikke
   trainer-rammer. Sjekk trainer-oppsettet på modellen.
+- **Styringen føles treg eller rykkete:** se på fanen Diagnose. En frekvens godt under
+  den beste sammen med en forsinkelse i snitt over omtrent 35 ms betyr svakt
+  Bluetooth-signal. Flytt radioen nærmere, og sjekk på en stasjonær PC at antennene
+  til WiFi/Bluetooth-kortet er montert – uten dem er rekkevidden svært kort.
+- **Forbindelsen faller etter noen sekunder, gang på gang:** det tyder på
+  Bluetooth-adapteren i PC-en eller driveren dens. Prøv en nyere driver (Microsoft
+  Update-katalogen kan ha en selv om Windows Update ikke tilbyr noen) eller en annen
+  adapter.
 - **Driveren «startet ikke (kode …)»:** åpne installasjonsloggen i appen. Prøv
   «Installer på nytt». Koden er den samme som Enhetsbehandling viser.
 - **Simulatoren finner ikke joysticken:** sjekk først med «Test i Windows (joy.cpl)».

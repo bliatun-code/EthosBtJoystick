@@ -18,12 +18,17 @@ use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
     GattDeviceService, GattSession, GattValueChangedEventArgs,
 };
-use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice};
+use windows::Devices::Bluetooth::{
+    BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice, BluetoothLEPreferredConnectionParameters,
+    BluetoothLEPreferredConnectionParametersRequest, BluetoothLEPreferredConnectionParametersRequestStatus,
+};
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Storage::Streams::DataReader;
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 
-use crate::bridge::{Bridge, LinkError, LinkState};
+use crate::adapter;
+use crate::bridge::{Bridge, ConnectionInfo, LinkError, LinkState};
+use crate::diag::{DropReason, EventKind};
 use crate::protocol::FrameDecoder;
 
 /// FrSky trainer service / characteristic (16 bit UUIDs 0xFFF0 / 0xFFF6).
@@ -46,6 +51,8 @@ pub enum Command {
     StopScan,
     Connect { address: u64, name: String },
     Disconnect,
+    /// Read the Bluetooth adapter information again.
+    RefreshAdapter,
     Shutdown,
 }
 
@@ -104,7 +111,10 @@ struct Connection {
     characteristic: GattCharacteristic,
     value_token: EventRegistrationToken,
     status_token: EventRegistrationToken,
+    parameters_token: Option<EventRegistrationToken>,
     _session: Option<GattSession>,
+    /// Keeps the "fastest interval" request alive (see `connect`).
+    _fast_request: Option<BluetoothLEPreferredConnectionParametersRequest>,
     /// Set by the connection status event when the link drops.
     dropped: Arc<AtomicBool>,
     since: Instant,
@@ -114,6 +124,9 @@ impl Drop for Connection {
     fn drop(&mut self) {
         let _ = self.characteristic.RemoveValueChanged(self.value_token);
         let _ = self.device.RemoveConnectionStatusChanged(self.status_token);
+        if let Some(token) = self.parameters_token {
+            let _ = self.device.RemoveConnectionParametersChanged(token);
+        }
         // closing the objects makes Windows release the Bluetooth link
         let _ = self.service.Close();
         let _ = self.device.Close();
@@ -159,6 +172,9 @@ impl Worker {
             let _ = RoInitialize(RO_INIT_MULTITHREADED);
         }
 
+        // facts about the PC's Bluetooth adapter, for the diagnostics view
+        self.bridge.set_adapter(adapter::query());
+
         loop {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
@@ -168,9 +184,16 @@ impl Worker {
             self.tick();
         }
 
-        self.connection = None;
+        self.close_connection(DropReason::User);
         self.watcher = None;
         self.bridge.neutralize();
+    }
+
+    /// Closes the current connection (if any) and records why.
+    fn close_connection(&mut self, reason: DropReason) {
+        if self.connection.take().is_some() {
+            self.bridge.connection_ended(reason);
+        }
     }
 
     fn handle(&mut self, command: Command) {
@@ -180,8 +203,10 @@ impl Worker {
                 self.user_scan = true;
             }
             Command::StopScan => self.user_scan = false,
+            Command::RefreshAdapter => self.bridge.set_adapter(adapter::query()),
             Command::Connect { address, name } => {
-                self.connection = None;
+                self.close_connection(DropReason::User);
+                self.bridge.log(EventKind::Target(name.clone()));
                 self.target_address.store(address, Ordering::Relaxed);
                 self.target_seen.store(false, Ordering::Relaxed);
                 self.target = Some(Target { address, name });
@@ -192,7 +217,7 @@ impl Worker {
                 self.bridge.neutralize();
             }
             Command::Disconnect => {
-                self.connection = None;
+                self.close_connection(DropReason::User);
                 self.target = None;
                 self.target_address.store(0, Ordering::Relaxed);
                 self.bridge.set_link(LinkState::Idle, None);
@@ -211,9 +236,15 @@ impl Worker {
             let silent = self.bridge.frame_age().unwrap_or_else(|| connection.since.elapsed());
 
             if dropped || silent > RECONNECT_AFTER {
-                self.connection = None;
                 self.bridge.signal_lost();
-                let error = if dropped { LinkError::LinkLost } else { LinkError::NoData };
+                // Two different failures: Windows says the link is gone, or the
+                // link is still up but no trainer data arrives and we give up.
+                let (error, reason) = if dropped {
+                    (LinkError::LinkLost, DropReason::LinkLost)
+                } else {
+                    (LinkError::NoData, DropReason::NoData)
+                };
+                self.close_connection(reason);
                 self.bridge.set_link(LinkState::Searching, Some(error));
                 self.target_seen.store(false, Ordering::Relaxed);
                 self.next_attempt = now + Duration::from_millis(500);
@@ -260,14 +291,18 @@ impl Worker {
                     } else {
                         BluetoothCacheMode::Cached
                     };
+                    let started = Instant::now();
                     match connect(&self.bridge, target.address, cache_mode) {
                         Ok(connection) => {
+                            self.bridge.connection_established(started.elapsed().as_millis() as u32);
+                            report_connection_info(&self.bridge, &connection.device);
                             self.connection = Some(connection);
                             self.failures = 0;
                             self.bridge.set_link(LinkState::Connected, None);
                         }
                         Err(error) => {
                             self.failures += 1;
+                            self.bridge.log(EventKind::ConnectFailed(error.clone()));
                             self.bridge.set_link(LinkState::Searching, Some(error));
                         }
                     }
@@ -431,6 +466,32 @@ fn connect(bridge: &Arc<Bridge>, address: u64, cache_mode: BluetoothCacheMode) -
         let _ = session.SetMaintainConnection(true);
     }
 
+    // Optional (Windows 11): ask for the shortest connection interval. The
+    // request stays in force for as long as the returned object lives.
+    let fast_request = if bridge.fast_connection() {
+        let request = BluetoothLEPreferredConnectionParameters::ThroughputOptimized()
+            .and_then(|parameters| device.RequestPreferredConnectionParameters(&parameters));
+        let accepted = matches!(
+            request.as_ref().map(|request| request.Status()),
+            Ok(Ok(BluetoothLEPreferredConnectionParametersRequestStatus::Success))
+        );
+        bridge.log(EventKind::FastRequested { accepted });
+        request.ok()
+    } else {
+        None
+    };
+
+    // Windows 11 tells us when the connection parameters change.
+    let parameters_bridge = bridge.clone();
+    let parameters_token = device
+        .ConnectionParametersChanged(&TypedEventHandler::<BluetoothLEDevice, IInspectable>::new(move |sender, _| {
+            if let Some(device) = sender {
+                report_connection_info(&parameters_bridge, device);
+            }
+            Ok(())
+        }))
+        .ok();
+
     let mut guard = guard;
     Ok(Connection {
         device: guard.0.take().unwrap(),
@@ -438,10 +499,39 @@ fn connect(bridge: &Arc<Bridge>, address: u64, cache_mode: BluetoothCacheMode) -
         characteristic,
         value_token,
         status_token,
+        parameters_token,
         _session: session,
+        _fast_request: fast_request,
         dropped,
         since: Instant::now(),
     })
+}
+
+/// Reads the negotiated connection interval and radio mode (Windows 11 only;
+/// silently does nothing where the API is missing).
+fn report_connection_info(bridge: &Bridge, device: &BluetoothLEDevice) {
+    let Ok(parameters) = device.GetConnectionParameters() else { return };
+    let (Ok(interval_units), Ok(latency), Ok(timeout_units)) =
+        (parameters.ConnectionInterval(), parameters.ConnectionLatency(), parameters.LinkTimeout())
+    else {
+        return;
+    };
+    let phy = device
+        .GetConnectionPhy()
+        .and_then(|phy| phy.ReceiveInfo())
+        .map(|info| {
+            if info.IsUncoded2MPhy().unwrap_or(false) {
+                2
+            } else if info.IsCodedPhy().unwrap_or(false) {
+                3
+            } else if info.IsUncoded1MPhy().unwrap_or(false) {
+                1
+            } else {
+                0
+            }
+        })
+        .unwrap_or(0);
+    bridge.set_connection_info(ConnectionInfo { interval_units, latency, timeout_units, phy });
 }
 
 /// Closes the device unless it was moved into a [`Connection`].
