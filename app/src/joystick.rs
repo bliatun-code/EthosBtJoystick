@@ -23,6 +23,14 @@ pub const BUTTON_COUNT: usize = 32;
 pub const AXIS_MAX: u16 = 0x7FFF;
 pub const AXIS_CENTER: u16 = 0x4000;
 
+/// Version of the driver embedded in this build (`EJ_VERSION`, BCD: 0x0110 = 1.1).
+/// An installed driver with a lower version should be updated.
+pub const DRIVER_VERSION: u16 = 0x0110;
+
+/// Since driver 1.1 the joystick returns to neutral when the app has not
+/// written for 1 s, so a running app must write at least this often.
+pub const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
 const REPORT_ID_CONTROL: u8 = 0x02;
 const REPORT_SIZE: usize = 1 + AXIS_COUNT * 2 + BUTTON_COUNT / 8;
 const CONTROL_USAGE_PAGE: u16 = 0xFF00;
@@ -57,6 +65,7 @@ impl JoyState {
 /// An open handle to the driver's control collection.
 pub struct VirtualJoystick {
     handle: HANDLE,
+    driver_version: u16,
 }
 
 // The handle is only used for WriteFile, which is safe from any thread.
@@ -98,14 +107,19 @@ impl VirtualJoystick {
                     continue;
                 }
             };
-            if unsafe { is_control_collection(handle) } {
-                return Ok(Self { handle });
+            if let Some(driver_version) = unsafe { control_collection_version(handle) } {
+                return Ok(Self { handle, driver_version });
             }
             unsafe {
                 let _ = CloseHandle(handle);
             }
         }
         Err(last_error)
+    }
+
+    /// Version of the installed driver (compare with [`DRIVER_VERSION`]).
+    pub fn driver_version(&self) -> u16 {
+        self.driver_version
     }
 
     pub fn write(&self, state: &JoyState) -> Result<(), String> {
@@ -195,25 +209,32 @@ unsafe fn read_input_report(handle: HANDLE) -> Option<Result<JoyState, String>> 
     Some(Ok(state))
 }
 
-unsafe fn is_control_collection(handle: HANDLE) -> bool {
+/// Returns the driver version if `handle` is our control collection.
+unsafe fn control_collection_version(handle: HANDLE) -> Option<u16> {
     let mut attributes = HIDD_ATTRIBUTES { Size: size_of::<HIDD_ATTRIBUTES>() as u32, ..Default::default() };
     if !HidD_GetAttributes(handle, &mut attributes).as_bool()
         || attributes.VendorID != VENDOR_ID
         || attributes.ProductID != PRODUCT_ID
     {
-        return false;
+        return None;
     }
 
     let mut preparsed = PHIDP_PREPARSED_DATA::default();
     if !HidD_GetPreparsedData(handle, &mut preparsed).as_bool() {
-        return false;
+        return None;
     }
     let mut caps = HIDP_CAPS::default();
     let status = HidP_GetCaps(preparsed, &mut caps);
     let _ = HidD_FreePreparsedData(preparsed);
-    status == HIDP_STATUS_SUCCESS
+    let is_control = status == HIDP_STATUS_SUCCESS
         && caps.UsagePage == CONTROL_USAGE_PAGE
-        && caps.OutputReportByteLength as usize == REPORT_SIZE
+        && caps.OutputReportByteLength as usize == REPORT_SIZE;
+    is_control.then_some(attributes.VersionNumber)
+}
+
+/// `0x0110` -> `"1.1"`
+pub fn format_driver_version(version: u16) -> String {
+    format!("{:x}.{:x}", version >> 8, (version >> 4) & 0xF)
 }
 
 /// HID device interface paths of the direct children of device node `devinst`.
@@ -357,5 +378,19 @@ mod tests {
         assert_eq!(&report[3..5], &[0x00, 0x40]);
         assert_eq!(&report[15..17], &[0xFF, 0x7F]);
         assert_eq!(&report[17..21], &[0x01, 0x00, 0x00, 0x80]);
+    }
+
+    /// DRIVER_VERSION must follow EJ_VERSION in the driver source.
+    #[test]
+    fn driver_version_matches_the_driver_source() {
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../driver/ethosjoy.c"));
+        let line = source
+            .lines()
+            .find(|line| line.trim_start().starts_with("#define EJ_VERSION"))
+            .expect("EJ_VERSION not found in driver/ethosjoy.c");
+        let value = line.split_whitespace().nth(2).unwrap().trim_start_matches("0x");
+        assert_eq!(u16::from_str_radix(value, 16).unwrap(), DRIVER_VERSION);
+        assert_eq!(format_driver_version(DRIVER_VERSION), "1.1");
+        assert_eq!(format_driver_version(0x0100), "1.0");
     }
 }

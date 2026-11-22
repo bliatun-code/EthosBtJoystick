@@ -278,10 +278,11 @@ impl Worker {
             }
         }
 
-        // 4. Housekeeping once a second.
+        // 4. Housekeeping once a second. (The virtual joystick is looked after
+        //    by the bridge's own thread, so a slow connection attempt here
+        //    cannot starve its keep-alive.)
         if now.duration_since(self.last_housekeeping) >= Duration::from_secs(1) {
             self.last_housekeeping = now;
-            self.bridge.ensure_joystick();
             if self.user_scan {
                 self.bridge.prune_devices(SCAN_ENTRY_LIFETIME);
             }

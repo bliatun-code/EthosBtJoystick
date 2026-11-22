@@ -5,12 +5,15 @@
 //! reads snapshots.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::config::{Failsafe, Mapping};
-use crate::joystick::{JoyState, VirtualJoystick};
+use crate::joystick::{JoyState, VirtualJoystick, KEEPALIVE_INTERVAL};
 use crate::protocol::{Frame, MAX_CHANNELS};
+
+/// Called when something the GUI shows has changed (not for every frame).
+type Wake = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LinkState {
@@ -83,6 +86,8 @@ pub struct Snapshot {
     pub frame_rate: f32,
     pub output: JoyState,
     pub joystick_open: bool,
+    /// Version of the installed driver (when the joystick is open).
+    pub driver_version: Option<u16>,
 }
 
 struct Inner {
@@ -109,11 +114,14 @@ struct Inner {
     rate_count: u32,
 
     output: JoyState,
+    /// When the joystick was last written (for the keep-alive).
+    last_write: Instant,
 }
 
 impl Inner {
     fn write_output(&mut self, state: JoyState) {
         self.output = state;
+        self.last_write = Instant::now();
         if let Some(joystick) = &self.joystick {
             if joystick.write(&state).is_err() {
                 // device went away (driver removed / updated); reopened later
@@ -125,11 +133,13 @@ impl Inner {
 
 pub struct Bridge {
     inner: Mutex<Inner>,
+    wake: Mutex<Option<Wake>>,
 }
 
 impl Bridge {
     pub fn new(mapping: Mapping) -> Self {
         Self {
+            wake: Mutex::new(None),
             inner: Mutex::new(Inner {
                 mapping,
                 joystick: None,
@@ -149,12 +159,56 @@ impl Bridge {
                 rate_start: Instant::now(),
                 rate_count: 0,
                 output: JoyState::NEUTRAL,
+                last_write: Instant::now(),
             }),
         }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Registers the callback that asks the GUI to redraw.
+    pub fn set_wake(&self, wake: impl Fn() + Send + Sync + 'static) {
+        *self.wake.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(wake));
+    }
+
+    /// Tells the GUI that the status changed. Never call this while holding
+    /// the state lock.
+    fn notify(&self) {
+        let wake = self.wake.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    /// Starts the background thread that looks after the virtual joystick: it
+    /// opens the device when the driver appears, and sends the keep-alive that
+    /// stops the driver's watchdog from centring the joystick while we run.
+    pub fn start_housekeeping(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let _ = std::thread::Builder::new().name("joystick".into()).spawn(move || {
+            let mut tick = 0u32;
+            loop {
+                let Some(bridge) = weak.upgrade() else { break };
+                bridge.keepalive();
+                if tick % 10 == 0 {
+                    bridge.ensure_joystick();
+                }
+                drop(bridge);
+                tick = tick.wrapping_add(1);
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+    }
+
+    /// Rewrites the current state if nothing was written for a while.
+    pub fn keepalive(&self) {
+        let mut inner = self.lock();
+        if inner.joystick.is_some() && inner.last_write.elapsed() >= KEEPALIVE_INTERVAL {
+            let state = inner.output;
+            inner.write_output(state);
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -174,6 +228,7 @@ impl Bridge {
             frame_rate: if receiving { inner.frame_rate } else { 0.0 },
             output: inner.output,
             joystick_open: inner.joystick.is_some(),
+            driver_version: inner.joystick.as_ref().map(|joystick| joystick.driver_version()),
         }
     }
 
@@ -197,13 +252,19 @@ impl Bridge {
             inner.rate_count = 0;
         }
 
-        if matches!(inner.link, LinkState::Connected | LinkState::SignalLost) {
+        let resumed = matches!(inner.link, LinkState::Connected | LinkState::SignalLost);
+        if resumed {
             inner.link = LinkState::Receiving;
             inner.link_error = None;
         }
 
         let state = inner.mapping.apply(frame.channels());
         inner.write_output(state);
+        drop(inner);
+
+        if resumed {
+            self.notify();
+        }
     }
 
     pub fn add_bad_frames(&self, count: u64) {
@@ -218,11 +279,17 @@ impl Bridge {
     /// The frames stopped: apply the failsafe.
     pub fn signal_lost(&self) {
         let mut inner = self.lock();
-        if inner.link == LinkState::Receiving {
+        let changed = inner.link == LinkState::Receiving;
+        if changed {
             inner.link = LinkState::SignalLost;
         }
         if inner.mapping.failsafe == Failsafe::Center && inner.output != JoyState::NEUTRAL {
             inner.write_output(JoyState::NEUTRAL);
+        }
+        drop(inner);
+
+        if changed {
+            self.notify();
         }
     }
 
@@ -251,6 +318,8 @@ impl Bridge {
         if matches!(link, LinkState::Idle | LinkState::Searching) {
             inner.channel_count = 0;
         }
+        drop(inner);
+        self.notify();
     }
 
     /// A new connection attempt starts: forget the previous frame statistics.
@@ -278,7 +347,10 @@ impl Bridge {
             let mut inner = self.lock();
             if inner.joystick.is_none() && !inner.joystick_suspended {
                 let _ = joystick.write(&inner.output);
+                inner.last_write = Instant::now();
                 inner.joystick = Some(joystick);
+                drop(inner);
+                self.notify();
             }
         }
     }
@@ -297,8 +369,14 @@ impl Bridge {
 
     pub fn set_scanning(&self, scanning: bool, error: Option<String>) {
         let mut inner = self.lock();
+        let changed = inner.scanning != scanning || inner.scan_error != error;
         inner.scanning = scanning;
         inner.scan_error = error;
+        drop(inner);
+
+        if changed {
+            self.notify();
+        }
     }
 
     pub fn clear_devices(&self) {

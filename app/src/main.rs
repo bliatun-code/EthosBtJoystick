@@ -1,8 +1,9 @@
 // No console window for the GUI.
 #![windows_subsystem = "windows"]
 
+use ethos_bt_joystick::autostart;
 use ethos_bt_joystick::installer::{self, Action};
-use ethos_bt_joystick::ui;
+use ethos_bt_joystick::{tray, ui};
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
@@ -20,21 +21,25 @@ fn main() {
         std::process::exit(installer::run_elevated(Action::Uninstall));
     }
 
-    // Two instances would fight over the radio and the joystick.
+    // Two instances would fight over the radio and the joystick. Starting the
+    // program again just brings the running one to the front (it may be
+    // hidden in the notification area).
     let _instance = unsafe { CreateMutexW(None, false, w!("Local\\EthosBtJoystick.SingleInstance")) };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        unsafe {
-            MessageBoxW(
-                None,
-                w!("Ethos BT Joystick is already running."),
-                w!("Ethos BT Joystick"),
-                MB_OK | MB_ICONINFORMATION,
-            );
+        if !tray::activate_running_instance() {
+            unsafe {
+                MessageBoxW(
+                    None,
+                    w!("Ethos BT Joystick is already running."),
+                    w!("Ethos BT Joystick"),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
         }
         return;
     }
 
-    if let Err(error) = ui::run(has("--demo")) {
+    if let Err(error) = ui::run(has("--demo"), has(autostart::ARG_MINIMIZED)) {
         let text: Vec<u16> = format!("Could not start the user interface:\n{error}\0").encode_utf16().collect();
         unsafe {
             MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), w!("Ethos BT Joystick"), MB_OK);
