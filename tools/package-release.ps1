@@ -36,6 +36,10 @@ $name = "EthosBtJoystick-v$Version-win-x64"
 # (run through cmd so cargo's progress output on stderr cannot become an error)
 Push-Location $app
 try {
+    # make sure every crate's source (with its license files) is unpacked in
+    # the cargo registry - after a cached build it may not be
+    & cmd.exe /c 'cargo fetch --locked --target x86_64-pc-windows-msvc 2>nul'
+    if ($LASTEXITCODE -ne 0) { throw 'cargo fetch failed.' }
     $tree = & cmd.exe /c 'cargo tree --target x86_64-pc-windows-msvc --edges normal --prefix none --format "{p}|{l}|{r}" 2>nul'
     if ($LASTEXITCODE -ne 0) { throw 'cargo tree failed.' }
 }
@@ -179,7 +183,9 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 Write-Host ''
 Write-Host ("Components: {0}, distinct license texts: {1}" -f $components.Count, $texts.Count)
 if ($withoutText.Count -gt 0) {
-    Write-Warning ("No license text found for: " + ($withoutText -join ', ') + " - add it to tools\third-party-extra.")
+    # never ship a zip with an incomplete license file
+    Remove-Item $zip -Force
+    throw ("No license text found for: " + ($withoutText -join ', ') + " - add it to tools\third-party-extra.")
 }
 Write-Host ("Zip:    {0}  ({1:N0} bytes)" -f $zip, (Get-Item $zip).Length) -ForegroundColor Green
 Write-Host ("SHA256: {0}" -f (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())
