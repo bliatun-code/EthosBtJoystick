@@ -161,6 +161,9 @@ pub struct Config {
     pub device: Option<SavedDevice>,
     /// Connect to `device` when the app starts.
     pub auto_connect: bool,
+    /// The close button hides the window in the notification area instead of
+    /// ending the program.
+    pub close_to_tray: bool,
     /// Also list Bluetooth devices that do not advertise a name.
     pub show_unnamed: bool,
     pub mapping: Mapping,
@@ -172,6 +175,7 @@ impl Default for Config {
             language: Lang::system_default(),
             device: None,
             auto_connect: true,
+            close_to_tray: false,
             show_unnamed: false,
             mapping: Mapping::default(),
         }

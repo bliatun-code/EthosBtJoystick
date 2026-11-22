@@ -1,5 +1,7 @@
 # Ethos BT Joystick
 
+[![Build](https://github.com/bliatun-code/EthosBtJoystick/actions/workflows/build.yml/badge.svg)](https://github.com/bliatun-code/EthosBtJoystick/actions/workflows/build.yml)
+
 *Norsk · [English](README.md)*
 
 Bruk en FrSky Ethos-radio som **trådløs joystick** for simulatorer på Windows – over
@@ -31,6 +33,15 @@ installeres med ett klikk.
 Appen husker radioen og kobler til automatisk neste gang. Faller forbindelsen ut,
 kobles det til igjen av seg selv.
 
+### Kjøre i bakgrunnen
+
+- **Start sammen med Windows (minimert)** starter programmet når du logger på, med
+  bare et ikon i systemstatusfeltet.
+- **Lukk-knappen skjuler vinduet i systemstatusfeltet** lar programmet kjøre videre
+  når du lukker vinduet. Klikk på ikonet for å åpne vinduet igjen; høyreklikk for å
+  avslutte.
+- Starter du programmet en gang til, kommer bare det som allerede kjører fram.
+
 ### Kanaler, akser og knapper
 
 - **Akser:** hver av de 8 aksene (X, Y, Z, Rx, Ry, Rz, Slider, Dial) kan hente verdien
@@ -40,6 +51,9 @@ kobles det til igjen av seg selv.
   En treveisbryter blir altså tre knapper på samme kanal.
 - **Tap av signal:** etter 0,5 s uten data sentreres aksene og knappene slippes
   (kan endres til «behold siste verdier»).
+- **Hvis programmet stopper:** driveren setter selv joysticken i nøytral når
+  programmet har vært stille i ett sekund, for eksempel etter en krasj. Dette krever
+  driver 1.1; er en eldre driver installert, tilbyr appen **Oppdater driver …**.
 
 Knappen **Test i Windows (joy.cpl)** åpner Windows' egen spillkontroller-test.
 
@@ -111,6 +125,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 Resultatet havner i `dist\EthosBtJoystick.exe`. `tools\package-release.ps1` pakker
 den deretter i en release-zip sammen med lisensfilene.
+
+GitHub Actions gjør det samme for hver push og pull request
+([arbeidsflyt](.github/workflows/build.yml)). En versjons-tag som `v1.2.0` lager i
+tillegg et utkast til release med zip-filen vedlagt.
 
 | Mappe | Innhold |
 | --- | --- |

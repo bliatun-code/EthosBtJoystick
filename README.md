@@ -1,5 +1,7 @@
 # Ethos BT Joystick
 
+[![Build](https://github.com/bliatun-code/EthosBtJoystick/actions/workflows/build.yml/badge.svg)](https://github.com/bliatun-code/EthosBtJoystick/actions/workflows/build.yml)
+
 *English · [Norsk](README.no.md)*
 
 Use a FrSky Ethos radio as a **wireless joystick** for simulators on Windows – over
@@ -32,6 +34,15 @@ and installed with one click.
 The app remembers the radio and connects automatically the next time. If the
 connection drops, it reconnects by itself.
 
+### Running in the background
+
+- **Start with Windows (minimised)** starts the program when you sign in, with only an
+  icon in the notification area.
+- **The close button hides the window in the notification area** keeps the program
+  running when you close its window. Click the icon to open the window again;
+  right-click it to exit.
+- Starting the program a second time just brings the running one to the front.
+
 ### Channels, axes and buttons
 
 - **Axes:** each of the 8 axes (X, Y, Z, Rx, Ry, Rz, Slider, Dial) can take its value
@@ -43,6 +54,9 @@ connection drops, it reconnects by itself.
   on the same channel.
 - **Signal loss:** after 0.5 s without data the axes are centred and the buttons
   released (can be changed to “keep the last values”).
+- **If the program stops:** the driver itself returns the joystick to neutral when the
+  program has been silent for a second, for example after a crash. This needs driver
+  1.1; if an older driver is installed, the app offers **Update driver …**.
 
 The **Test in Windows (joy.cpl)** button opens Windows' own game controller test.
 
@@ -114,6 +128,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 The result ends up in `dist\EthosBtJoystick.exe`. `tools\package-release.ps1` then
 packs it into a release zip together with the license files.
+
+GitHub Actions does the same for every push and pull request
+([workflow](.github/workflows/build.yml)). Pushing a version tag such as `v1.2.0`
+also creates a draft release with the zip attached.
 
 | Folder | Contents |
 | --- | --- |

@@ -528,9 +528,10 @@ checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
 name = "ethos-bt-joystick"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "eframe",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "windows",

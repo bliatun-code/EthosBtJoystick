@@ -1,19 +1,28 @@
 //! The window (egui).
 
+use std::cell::Cell;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, RichText};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+use crate::autostart;
 use crate::ble::{self, BleHandle, Command};
 use crate::bridge::{Bridge, LinkError, LinkState, Snapshot};
+use crate::tray::{self, CloseFlags, Tray, TrayHandle};
 use crate::config::{
     AxisMap, ButtonMap, Config, Failsafe, Lang, Mapping, SavedDevice, SwitchPos, SELECTABLE_CHANNELS, US_CENTER,
     US_MAX, US_MIN,
 };
 use crate::installer::{self, Action, LaunchError, Outcome};
-use crate::joystick::{driver_status, DriverStatus, AXIS_COUNT, AXIS_MAX, AXIS_NAMES, BUTTON_COUNT};
+use crate::joystick::{
+    driver_status, format_driver_version, DriverStatus, AXIS_COUNT, AXIS_MAX, AXIS_NAMES, BUTTON_COUNT,
+    DRIVER_VERSION,
+};
 use crate::protocol::{encode_frame, FrameDecoder};
 use crate::util::format_address;
 
@@ -32,9 +41,11 @@ fn tr<'a>(lang: Lang, no: &'a str, en: &'a str) -> &'a str {
     }
 }
 
-pub fn run(demo: bool) -> eframe::Result<()> {
+/// `minimized`: start with only the tray icon (used by "Start with Windows").
+pub fn run(demo: bool, minimized: bool) -> eframe::Result<()> {
     let config = Config::load();
     let bridge = Arc::new(Bridge::new(config.mapping.clone()));
+    bridge.start_housekeeping();
     let ble = ble::spawn(bridge.clone());
     if demo {
         spawn_demo(bridge.clone());
@@ -52,7 +63,7 @@ pub fn run(demo: bool) -> eframe::Result<()> {
     eframe::run_native(
         "Ethos BT Joystick",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, config, bridge, ble, demo)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, config, bridge, ble, demo, minimized)))),
     )
 }
 
@@ -65,7 +76,7 @@ struct DeviceRow {
 
 struct App {
     bridge: Arc<Bridge>,
-    ble: BleHandle,
+    ble: Rc<BleHandle>,
     config: Config,
     saved: Config,
     selected: Option<u64>,
@@ -78,6 +89,22 @@ struct App {
     driver_note: Option<DriverNote>,
     driver_log: String,
     demo: bool,
+
+    /// The main window (0 if it could not be determined).
+    main_window: isize,
+    tray: Option<Tray>,
+    /// Language for the tray menu and tooltip, shared with other threads.
+    tray_language: Arc<AtomicU8>,
+    /// The "still running in the notification area" hint was shown.
+    tray_notice_shown: bool,
+    /// Shared with the tray module, which intercepts the close button.
+    close_flags: CloseFlags,
+    /// Started with --minimized: steps left until the window is in the
+    /// notification area (see `update`).
+    start_in_tray: u8,
+    /// "Start with Windows" is on (read from the registry).
+    autostart: bool,
+    settings_error: Option<String>,
 }
 
 /// What happened to the last driver install / uninstall. Kept as data rather
@@ -123,11 +150,52 @@ impl DriverNote {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, config: Config, bridge: Arc<Bridge>, ble: BleHandle, demo: bool) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: Config,
+        bridge: Arc<Bridge>,
+        ble: BleHandle,
+        demo: bool,
+        minimized: bool,
+    ) -> Self {
         cc.egui_ctx.style_mut(|style| {
             style.spacing.item_spacing = egui::vec2(8.0, 6.0);
             style.spacing.button_padding = egui::vec2(10.0, 4.0);
         });
+
+        // status changes from the Bluetooth / joystick threads redraw the window
+        let ctx = cc.egui_ctx.clone();
+        bridge.set_wake(move || ctx.request_repaint());
+
+        let ble = Rc::new(ble);
+        let main_window = match cc.window_handle().map(|handle| handle.as_raw()) {
+            Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
+            _ => 0,
+        };
+        let tray_language = Arc::new(AtomicU8::new(tray_language_code(config.language)));
+
+        // The tray icon. "Exit" in its menu must work while the window is
+        // hidden (when nothing is being drawn), so it cleans up and ends the
+        // process directly instead of going through the window's close path.
+        let tray_window = Rc::new(Cell::new(0isize));
+        let close_flags = CloseFlags::default();
+        close_flags.close_to_tray.store(config.close_to_tray, Ordering::Relaxed);
+        let tray = (main_window != 0)
+            .then(|| {
+                let (bridge, ble, tray_window) = (bridge.clone(), ble.clone(), tray_window.clone());
+                let on_exit = Box::new(move || {
+                    ble.shutdown(Duration::from_millis(1500));
+                    bridge.neutralize();
+                    Tray::remove_icon(tray_window.get());
+                    std::process::exit(0);
+                });
+                Tray::new(main_window, &app_icon().rgba, 32, tray_language.clone(), close_flags.clone(), on_exit)
+            })
+            .flatten();
+        if let Some(tray) = &tray {
+            tray_window.set(tray.handle().raw());
+            spawn_tooltip_updater(bridge.clone(), tray.handle(), tray_language.clone());
+        }
 
         let mut app = Self {
             bridge,
@@ -142,6 +210,14 @@ impl App {
             driver_note: None,
             driver_log: String::new(),
             demo,
+            main_window,
+            tray,
+            tray_language,
+            tray_notice_shown: false,
+            close_flags,
+            start_in_tray: if minimized { 2 } else { 0 },
+            autostart: autostart::is_enabled(),
+            settings_error: None,
         };
 
         if !demo && app.config.auto_connect {
@@ -387,10 +463,22 @@ impl App {
         section_title(ui, "2", tr(lang, "Virtuell joystick", "Virtual joystick"));
 
         let busy = self.driver_job.is_some();
+        // an older driver than the one built into this program is installed
+        let outdated = snap.driver_version.filter(|version| *version < DRIVER_VERSION);
         let (color, text) = if busy {
             (YELLOW, tr(lang, "Arbeider …", "Working …").to_string())
         } else {
             match (self.driver_status, snap.joystick_open) {
+                (DriverStatus::Running, true) if outdated.is_some() => (
+                    YELLOW,
+                    format!(
+                        "{} {} – {} {}",
+                        tr(lang, "Klar, men med driver", "Ready, but with driver"),
+                        format_driver_version(outdated.unwrap_or_default()),
+                        tr(lang, "oppdater til", "update to"),
+                        format_driver_version(DRIVER_VERSION)
+                    ),
+                ),
                 (DriverStatus::Running, true) => (
                     GREEN,
                     tr(lang, "Klar – vises som «Ethos BT Joystick»", "Ready – shows up as “Ethos BT Joystick”")
@@ -423,10 +511,12 @@ impl App {
                     self.start_driver_job(Action::Install, &ctx);
                 }
             } else {
-                if ui
-                    .add_enabled(!busy, egui::Button::new(tr(lang, "Installer på nytt", "Reinstall")))
-                    .clicked()
-                {
+                let button = if outdated.is_some() {
+                    egui::Button::new(RichText::new(tr(lang, "Oppdater driver …", "Update driver …")).strong())
+                } else {
+                    egui::Button::new(tr(lang, "Installer på nytt", "Reinstall"))
+                };
+                if ui.add_enabled(!busy, button).clicked() {
                     self.start_driver_job(Action::Install, &ctx);
                 }
                 if ui
@@ -453,6 +543,16 @@ impl App {
         if let Some(note) = &self.driver_note {
             ui.label(RichText::new(note.text(lang)).color(if note.success() { GREEN } else { RED }));
         }
+        if outdated.is_some() && !busy {
+            ui.label(
+                RichText::new(tr(
+                    lang,
+                    "Den nye driveren setter joysticken i nøytral hvis programmet stopper uventet.",
+                    "The new driver returns the joystick to neutral if the program stops unexpectedly.",
+                ))
+                .weak(),
+            );
+        }
         if self.driver_status == DriverStatus::NotInstalled && !busy {
             ui.label(
                 RichText::new(tr(
@@ -472,6 +572,52 @@ impl App {
                         ui.add(egui::Label::new(RichText::new(&self.driver_log).monospace().small()).selectable(true));
                     });
                 });
+        }
+    }
+
+    fn settings_section(&mut self, ui: &mut egui::Ui) {
+        let lang = self.config.language;
+        section_title(ui, "3", tr(lang, "Innstillinger", "Settings"));
+
+        let mut autostart = self.autostart;
+        if ui
+            .checkbox(&mut autostart, tr(lang, "Start sammen med Windows (minimert)", "Start with Windows (minimised)"))
+            .changed()
+        {
+            self.settings_error = autostart::set_enabled(autostart).err();
+            self.autostart = autostart::is_enabled();
+        }
+        ui.add_enabled(
+            self.tray.as_ref().is_some_and(|tray| tray.intercepts_close()),
+            egui::Checkbox::new(
+                &mut self.config.close_to_tray,
+                tr(
+                    lang,
+                    "Lukk-knappen skjuler vinduet i systemstatusfeltet",
+                    "The close button hides the window in the notification area",
+                ),
+            ),
+        );
+        if let Some(error) = &self.settings_error {
+            ui.label(RichText::new(error).color(RED));
+        }
+    }
+
+    /// Sends the window to the notification area; the tray icon brings it back.
+    fn hide_to_tray(&mut self) {
+        let lang = self.config.language;
+        let Some(tray) = &self.tray else { return };
+        tray::send_to_tray(self.main_window);
+        if !self.tray_notice_shown {
+            self.tray_notice_shown = true;
+            tray.show_notice(
+                "Ethos BT Joystick",
+                tr(
+                    lang,
+                    "Programmet kjører videre her. Klikk på ikonet for å åpne vinduet, høyreklikk for å avslutte.",
+                    "The program keeps running here. Click the icon to open the window, right-click to exit.",
+                ),
+            );
         }
     }
 
@@ -668,6 +814,31 @@ impl eframe::App for App {
         self.poll_background();
         let snap = self.bridge.snapshot();
         let lang = self.config.language;
+        self.tray_language.store(tray_language_code(lang), Ordering::Relaxed);
+
+        // The close button can send the window to the notification area
+        // instead of ending the program. The tray module intercepts it (see
+        // `tray::main_window_proc`) and leaves a request here.
+        self.close_flags.close_to_tray.store(self.config.close_to_tray, Ordering::Relaxed);
+        if self.close_flags.hide_requested.swap(false, Ordering::Relaxed) {
+            self.hide_to_tray();
+        }
+
+        // Started with --minimized. eframe shows the window after drawing its
+        // first frame, so: make it invisible on screen before that happens,
+        // then move it to the notification area in the next frame.
+        match self.start_in_tray {
+            2 if self.tray.is_some() => {
+                tray::cloak_window(self.main_window);
+                self.start_in_tray = 1;
+                ctx.request_repaint();
+            }
+            1 => {
+                self.start_in_tray = 0;
+                tray::send_to_tray(self.main_window);
+            }
+            _ => self.start_in_tray = 0,
+        }
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(4.0);
@@ -726,6 +897,9 @@ impl eframe::App for App {
                 self.joystick_section(ui, &snap);
                 ui.add_space(10.0);
                 ui.separator();
+                self.settings_section(ui);
+                ui.add_space(10.0);
+                ui.separator();
                 self.help_section(ui);
             });
         });
@@ -748,9 +922,57 @@ impl eframe::App for App {
             self.saved = self.config.clone();
         }
 
-        // live values: keep repainting at a modest rate
-        ctx.request_repaint_after(Duration::from_millis(40));
+        // Redraw quickly only while something on screen moves (live channels,
+        // spinners). Otherwise a slow tick is enough: status changes from the
+        // other threads request a redraw themselves (see `Bridge::set_wake`).
+        let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        let moving = matches!(snap.link, LinkState::Receiving | LinkState::Connecting)
+            || snap.scanning
+            || self.driver_job.is_some();
+        let interval = if moving && !minimized { 40 } else { 500 };
+        ctx.request_repaint_after(Duration::from_millis(interval));
     }
+}
+
+fn tray_language_code(lang: Lang) -> u8 {
+    match lang {
+        Lang::No => tray::LANG_NORWEGIAN,
+        Lang::En => tray::LANG_ENGLISH,
+    }
+}
+
+/// One line for the tray icon's tooltip.
+fn tray_tooltip(english: bool, snap: &Snapshot) -> String {
+    let lang = if english { Lang::En } else { Lang::No };
+    let name = if snap.device_name.is_empty() { "radio" } else { snap.device_name.as_str() };
+    let status = match snap.link {
+        LinkState::Idle => tr(lang, "ikke tilkoblet", "not connected").to_string(),
+        LinkState::Searching => format!("{} {name}", tr(lang, "venter på", "waiting for")),
+        LinkState::Connecting => format!("{} {name}", tr(lang, "kobler til", "connecting to")),
+        LinkState::Connected => format!("{name}: {}", tr(lang, "venter på data", "waiting for data")),
+        LinkState::Receiving => {
+            format!("{name}: {} {}", snap.channel_count, tr(lang, "kanaler", "channels"))
+        }
+        LinkState::SignalLost => format!("{name}: {}", tr(lang, "ingen data", "no data")),
+    };
+    format!("Ethos BT Joystick – {status}")
+}
+
+/// Keeps the tray tooltip in step with the connection, independently of how
+/// often the window is drawn.
+fn spawn_tooltip_updater(bridge: Arc<Bridge>, tray: TrayHandle, language: Arc<AtomicU8>) {
+    let _ = std::thread::Builder::new().name("tray-tooltip".into()).spawn(move || {
+        let mut shown = String::new();
+        loop {
+            let english = language.load(Ordering::Relaxed) == tray::LANG_ENGLISH;
+            let text = tray_tooltip(english, &bridge.snapshot());
+            if text != shown {
+                tray.set_tooltip(&text);
+                shown = text;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
 }
 
 impl Drop for App {

@@ -33,7 +33,14 @@
 
 #define EJ_VENDOR_ID            0x1209
 #define EJ_PRODUCT_ID           0xE7B0
-#define EJ_VERSION              0x0100
+#define EJ_VERSION              0x0110      /* 1.1 - keep in sync with DRIVER_VERSION in app/src/joystick.rs */
+
+/*
+ * Watchdog: if the app has not written a report for this long (it crashed or
+ * was killed), the joystick goes back to neutral. A running app writes at
+ * least a keep-alive every few hundred milliseconds.
+ */
+#define EJ_WATCHDOG_MS          1000
 
 #define EJ_REPORT_ID_JOYSTICK   0x01
 #define EJ_REPORT_ID_CONTROL    0x02
@@ -110,6 +117,7 @@ typedef struct _DEVICE_CONTEXT {
     WDFQUEUE                DefaultQueue;
     WDFQUEUE                ManualQueue;        /* pending IOCTL_HID_READ_REPORT */
     WDFWAITLOCK             Lock;               /* guards State / Dirty          */
+    WDFTIMER                Watchdog;           /* neutralises a silent joystick */
     HID_DEVICE_ATTRIBUTES   HidDeviceAttributes;
     UCHAR                   State[EJ_PAYLOAD_SIZE];
     BOOLEAN                 Dirty;              /* State not yet reported        */
@@ -120,6 +128,7 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, GetDeviceContext);
 DRIVER_INITIALIZE                   DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD           EvtDeviceAdd;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL  EvtIoDeviceControl;
+EVT_WDF_TIMER                       EvtWatchdogTimer;
 
 /* ------------------------------------------------------------------------- */
 /* Helpers                                                                   */
@@ -284,34 +293,28 @@ ReadReport(
 }
 
 /*
- * New axis/button data from the app (output report 2, feature or write).
+ * Makes `State` the joystick's state. If it differs from the current one it is
+ * handed to hidclass, either by completing the pending read or - if there is
+ * none right now - by marking it as not yet reported.
  */
-static NTSTATUS
-WriteControlReport(
+static VOID
+ApplyState(
     _In_ PDEVICE_CONTEXT    Context,
-    _In_ WDFREQUEST         Request
+    _In_reads_bytes_(EJ_PAYLOAD_SIZE) const UCHAR *State
     )
 {
-    NTSTATUS    status;
-    PUCHAR      buffer;
-    size_t      length;
     WDFREQUEST  readRequest = NULL;
     UCHAR       report[EJ_REPORT_SIZE];
 
-    status = RequestGetReportToWrite(Request, &buffer, &length);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-    if (length < EJ_REPORT_SIZE) {
-        return STATUS_INVALID_BUFFER_SIZE;
-    }
-    if (buffer[0] != EJ_REPORT_ID_CONTROL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     WdfWaitLockAcquire(Context->Lock, NULL);
 
-    RtlCopyMemory(Context->State, buffer + 1, EJ_PAYLOAD_SIZE);
+    if (RtlEqualMemory(Context->State, State, EJ_PAYLOAD_SIZE)) {
+        /* nothing changed (e.g. a keep-alive): no new input report */
+        WdfWaitLockRelease(Context->Lock);
+        return;
+    }
+
+    RtlCopyMemory(Context->State, State, EJ_PAYLOAD_SIZE);
     BuildJoystickReport(Context, report);
 
     if (NT_SUCCESS(WdfIoQueueRetrieveNextRequest(Context->ManualQueue, &readRequest))) {
@@ -327,9 +330,55 @@ WriteControlReport(
         NTSTATUS readStatus = RequestCopyFromBuffer(readRequest, report, sizeof(report));
         WdfRequestComplete(readRequest, readStatus);
     }
+}
+
+/*
+ * New axis/button data from the app (output report 2, feature or write).
+ */
+static NTSTATUS
+WriteControlReport(
+    _In_ PDEVICE_CONTEXT    Context,
+    _In_ WDFREQUEST         Request
+    )
+{
+    NTSTATUS    status;
+    PUCHAR      buffer;
+    size_t      length;
+
+    status = RequestGetReportToWrite(Request, &buffer, &length);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    if (length < EJ_REPORT_SIZE) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (buffer[0] != EJ_REPORT_ID_CONTROL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ApplyState(Context, buffer + 1);
+
+    /* (Re)arm the watchdog: every report from the app proves it is alive. */
+    WdfTimerStart(Context->Watchdog, WDF_REL_TIMEOUT_IN_MS(EJ_WATCHDOG_MS));
 
     WdfRequestSetInformation(Request, EJ_REPORT_SIZE);
     return STATUS_SUCCESS;
+}
+
+/*
+ * The app has been silent for EJ_WATCHDOG_MS: centre the axes and release the
+ * buttons, so a crashed app cannot leave the sticks deflected.
+ */
+VOID
+EvtWatchdogTimer(
+    _In_ WDFTIMER Timer
+    )
+{
+    PDEVICE_CONTEXT context = GetDeviceContext((WDFDEVICE)WdfTimerGetParentObject(Timer));
+    UCHAR           neutral[EJ_PAYLOAD_SIZE];
+
+    SetNeutralState(neutral);
+    ApplyState(context, neutral);
 }
 
 /*
@@ -475,6 +524,7 @@ EvtDeviceAdd(
     NTSTATUS                status;
     WDF_OBJECT_ATTRIBUTES   attributes;
     WDF_IO_QUEUE_CONFIG     queueConfig;
+    WDF_TIMER_CONFIG        timerConfig;
     WDFDEVICE               device;
     PDEVICE_CONTEXT         context;
 
@@ -507,6 +557,16 @@ EvtDeviceAdd(
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = device;
     status = WdfWaitLockCreate(&attributes, &context->Lock);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    /* One-shot watchdog, restarted by every report from the app. */
+    WDF_TIMER_CONFIG_INIT(&timerConfig, EvtWatchdogTimer);
+    timerConfig.AutomaticSerialization = FALSE;     /* ApplyState takes our own lock */
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = device;
+    status = WdfTimerCreate(&timerConfig, &attributes, &context->Watchdog);
     if (!NT_SUCCESS(status)) {
         return status;
     }
