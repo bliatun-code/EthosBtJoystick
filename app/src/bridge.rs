@@ -97,6 +97,9 @@ pub struct Snapshot {
     pub quality: Option<LinkQuality>,
     /// Best single second of this connection (frames).
     pub best_rate: f32,
+    /// Times per second that new data arrives. Bluetooth delivers frames in
+    /// bursts, so this can be far below the frame rate.
+    pub update_rate: f32,
     /// Longest pause between frames in the last few seconds.
     pub max_gap_ms: f32,
     /// Frames per second for the last half minute, oldest first.
@@ -280,6 +283,7 @@ impl Bridge {
         Snapshot {
             quality: if live { summary.quality } else { None },
             best_rate: summary.best_rate,
+            update_rate: if receiving { summary.update_rate } else { 0.0 },
             max_gap_ms: summary.max_gap_ms,
             history: summary.history,
             events: inner.events.events().to_vec(),

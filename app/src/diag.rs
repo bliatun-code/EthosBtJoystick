@@ -19,11 +19,37 @@ const WINDOW_SECONDS: usize = 3;
 /// Maximum number of events kept in the log.
 const MAX_EVENTS: usize = 200;
 
+/// Frames that arrive less than this apart came in the same Bluetooth
+/// connection event: the simulator only ever sees the last one of them.
+const BURST_GAP: Duration = Duration::from_millis(4);
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Second {
     pub frames: u16,
     /// Longest pause between two frames that ended in this second.
     pub max_gap_ms: u16,
+    /// How many times new data arrived. Bluetooth delivers frames in bursts,
+    /// one burst per connection interval, so this can be far below `frames`.
+    pub updates: u16,
+}
+
+/// Why the pauses between frames are as long as they are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseCause {
+    /// Lost packets: weak signal, distance, missing antennas.
+    Signal,
+    /// The connection interval itself is long, so every lost interval costs a
+    /// long pause. A shorter interval is the cure, not a stronger signal.
+    LongInterval,
+}
+
+/// Decides which advice fits. With a long connection interval (25 ms or more)
+/// a pause of up to about two intervals is what a single lost interval gives.
+pub fn pause_cause(max_gap_ms: f32, interval_ms: Option<f32>) -> PauseCause {
+    match interval_ms {
+        Some(interval) if interval >= 25.0 && max_gap_ms <= interval * 2.6 => PauseCause::LongInterval,
+        _ => PauseCause::Signal,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +82,8 @@ pub struct Summary {
     pub history: Vec<Second>,
     /// Frames per second, averaged over the last few complete seconds.
     pub rate: f32,
+    /// Times per second that new data arrived (see [`Second::updates`]).
+    pub update_rate: f32,
     /// Best single second of this connection.
     pub best_rate: f32,
     /// Longest pause in the same window, including one that is still going on.
@@ -96,14 +124,17 @@ impl FrameStats {
 
     pub fn on_frame(&mut self, now: Instant) {
         self.advance(now);
-        let gap = self
-            .last_frame
-            .map(|last| now.saturating_duration_since(last).as_millis().min(u16::MAX as u128) as u16)
-            .unwrap_or(0);
+        let since_last = self.last_frame.map(|last| now.saturating_duration_since(last));
+        let gap = since_last.map_or(0, |gap| gap.as_millis().min(u16::MAX as u128) as u16);
+        // the first frame, or one that did not arrive together with the previous one
+        let new_update = since_last.map_or(true, |gap| gap >= BURST_GAP);
         self.last_frame = Some(now);
         let bucket = self.bucket(self.current);
         bucket.frames = bucket.frames.saturating_add(1);
         bucket.max_gap_ms = bucket.max_gap_ms.max(gap);
+        if new_update {
+            bucket.updates = bucket.updates.saturating_add(1);
+        }
     }
 
     pub fn summary(&mut self, now: Instant) -> Summary {
@@ -114,11 +145,15 @@ impl FrameStats {
             (0..complete).map(|i| *self.bucket(self.current - (complete - i) as u64)).collect();
 
         let window = &history[history.len().saturating_sub(WINDOW_SECONDS)..];
-        let rate = if window.is_empty() {
-            0.0
-        } else {
-            window.iter().map(|s| s.frames as f32).sum::<f32>() / window.len() as f32
+        let average = |value: fn(&Second) -> u16| {
+            if window.is_empty() {
+                0.0
+            } else {
+                window.iter().map(|second| value(second) as f32).sum::<f32>() / window.len() as f32
+            }
         };
+        let rate = average(|second| second.frames);
+        let update_rate = average(|second| second.updates);
 
         // pauses: the window, the second being filled, and a pause still in progress
         let ongoing = self.last_frame.map_or(0, |last| now.saturating_duration_since(last).as_millis());
@@ -131,7 +166,7 @@ impl FrameStats {
 
         let best_rate = self.best_rate as f32;
         let quality = (!window.is_empty() && self.last_frame.is_some()).then(|| classify(rate, best_rate, max_gap_ms));
-        Summary { history, rate, best_rate, max_gap_ms, quality }
+        Summary { history, rate, update_rate, best_rate, max_gap_ms, quality }
     }
 }
 
@@ -321,6 +356,46 @@ mod tests {
         assert_eq!(summary.history.first().unwrap().frames, 11); // second 10
         assert_eq!(summary.history.last().unwrap().frames, 40); // second 39
         assert_eq!(summary.best_rate, 40.0);
+    }
+
+    /// The pattern measured on a real link with a 43.75 ms connection
+    /// interval: four frames arrive together every interval (91 frames per
+    /// second, but new data only 23 times per second), and about once a
+    /// second an interval is lost, which doubles the pause.
+    #[test]
+    fn frames_delivered_in_bursts() {
+        let start = Instant::now();
+        let mut stats = FrameStats::new(start);
+        let interval_us = 43_750u64;
+        let mut event = 0u64;
+        while event * interval_us < 6_000_000 {
+            if event % 23 != 22 {
+                for frame in 0..4 {
+                    stats.on_frame(start + Duration::from_micros(event * interval_us + frame * 300));
+                }
+            }
+            event += 1;
+        }
+        let summary = stats.summary(start + Duration::from_millis(6001));
+        assert!((85.0..=93.0).contains(&summary.rate), "rate {}", summary.rate);
+        assert!((20.0..=24.0).contains(&summary.update_rate), "updates {}", summary.update_rate);
+        assert!((85.0..=90.0).contains(&summary.max_gap_ms), "gap {}", summary.max_gap_ms);
+        assert_eq!(summary.quality, Some(LinkQuality::Weak));
+
+        // ... and the pauses are explained by the interval, not by the signal
+        assert_eq!(pause_cause(summary.max_gap_ms, Some(43.75)), PauseCause::LongInterval);
+        assert_eq!(pause_cause(summary.max_gap_ms, Some(13.75)), PauseCause::Signal);
+        assert_eq!(pause_cause(summary.max_gap_ms, None), PauseCause::Signal);
+        assert_eq!(pause_cause(300.0, Some(43.75)), PauseCause::Signal);
+    }
+
+    #[test]
+    fn evenly_spaced_frames_are_one_update_each() {
+        let start = Instant::now();
+        let mut stats = FrameStats::new(start);
+        feed(&mut stats, start, 0, 4000, 10);
+        let summary = stats.summary(start + Duration::from_millis(4001));
+        assert!((summary.update_rate - summary.rate).abs() < 1.0);
     }
 
     #[test]

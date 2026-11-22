@@ -8,7 +8,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::adapter::{self, AdapterInfo};
 use crate::bridge::{LinkState, Snapshot};
 use crate::config::{Config, Lang};
-use crate::diag::{DropReason, Event, EventKind, LinkQuality, HISTORY_SECONDS};
+use crate::diag::{pause_cause, DropReason, Event, EventKind, LinkQuality, PauseCause, HISTORY_SECONDS};
 use crate::joystick::{format_driver_version, DriverStatus};
 use crate::ui::{link_error_text, status_line, tr, GRAY, GREEN, RED, YELLOW};
 
@@ -35,20 +35,32 @@ pub fn quality_word(lang: Lang, quality: LinkQuality) -> &'static str {
 }
 
 /// Advice for a link that is not good.
-fn quality_advice(lang: Lang, quality: LinkQuality) -> Option<&'static str> {
-    match quality {
-        LinkQuality::Good => None,
-        LinkQuality::Weak => Some(tr(
+fn quality_advice(lang: Lang, quality: LinkQuality, cause: PauseCause) -> Option<&'static str> {
+    match (quality, cause) {
+        (LinkQuality::Good, _) => None,
+        // The pauses are what one lost connection interval costs: a shorter
+        // interval helps, a stronger signal would not.
+        (_, PauseCause::LongInterval) => Some(tr(
+            lang,
+            "Oppholdene kommer av det lange forbindelsesintervallet: hver gang ett intervall går tapt, blir oppholdet dobbelt så langt. Prøv «Be Windows om raskest mulig forbindelse» nedenfor.",
+            "The pauses come from the long connection interval: every time one interval is lost, the pause is twice as long. Try “Ask Windows for the fastest connection” below.",
+        )),
+        (LinkQuality::Weak, PauseCause::Signal) => Some(tr(
             lang,
             "Rammene kommer ujevnt. Flytt radioen nærmere PC-en, og sjekk at Bluetooth-antennene på PC-en er montert.",
             "Frames arrive unevenly. Move the radio closer to the PC, and check that the PC's Bluetooth antennas are fitted.",
         )),
-        LinkQuality::Poor => Some(tr(
+        (LinkQuality::Poor, PauseCause::Signal) => Some(tr(
             lang,
             "For ustabilt til presis styring. Flytt radioen nærmere PC-en, og sjekk at Bluetooth-antennene på PC-en er montert.",
             "Too unstable for precise control. Move the radio closer to the PC, and check that the PC's Bluetooth antennas are fitted.",
         )),
     }
+}
+
+/// True when frames clearly arrive in bursts rather than one by one.
+fn bursty(snap: &Snapshot) -> bool {
+    snap.update_rate > 0.0 && snap.update_rate < snap.frame_rate * 0.7
 }
 
 pub fn quick_drops_text(lang: Lang) -> &'static str {
@@ -253,7 +265,18 @@ pub fn show(
                 snap.max_gap_ms
             );
             status_line(ui, quality_color(quality), &text);
-            if let Some(advice) = quality_advice(lang, quality) {
+            // Bluetooth hands the frames over in bursts, one per connection
+            // interval: the simulator only gets new values that often.
+            if bursty(snap) {
+                ui.label(format!(
+                    "{} {:.0} {}",
+                    tr(lang, "Rammene kommer i klumper: nye verdier", "The frames arrive in bursts: new values"),
+                    snap.update_rate,
+                    tr(lang, "ganger per sekund.", "times per second.")
+                ));
+            }
+            let cause = pause_cause(snap.max_gap_ms, snap.connection.map(|connection| connection.interval_ms()));
+            if let Some(advice) = quality_advice(lang, quality, cause) {
                 ui.label(RichText::new(advice).color(quality_color(quality)));
             }
         }
@@ -432,8 +455,8 @@ pub fn report(snap: &Snapshot, driver_status: DriverStatus) -> String {
         let quality = snap.quality.map_or("measuring", |quality| quality_word(lang, quality));
         let _ = writeln!(
             out,
-            "Link: {} channels, {:.0} Hz now, best {:.0} Hz, longest pause {:.0} ms, quality {quality}",
-            snap.channel_count, snap.frame_rate, snap.best_rate, snap.max_gap_ms
+            "Link: {} channels, {:.0} Hz now, best {:.0} Hz, new data {:.0} times/s, longest pause {:.0} ms, quality {quality}",
+            snap.channel_count, snap.frame_rate, snap.best_rate, snap.update_rate, snap.max_gap_ms
         );
     }
     if let Some(connection) = &snap.connection {
@@ -449,8 +472,10 @@ pub fn report(snap: &Snapshot, driver_status: DriverStatus) -> String {
     let _ = writeln!(out, "Frames: {} received, {} dropped", snap.frames_total, snap.bad_frames);
     if !snap.history.is_empty() {
         let rates: Vec<String> = snap.history.iter().map(|second| second.frames.to_string()).collect();
+        let updates: Vec<String> = snap.history.iter().map(|second| second.updates.to_string()).collect();
         let pauses: Vec<String> = snap.history.iter().map(|second| second.max_gap_ms.to_string()).collect();
         let _ = writeln!(out, "Frames per second, oldest first: {}", rates.join(" "));
+        let _ = writeln!(out, "New data per second:             {}", updates.join(" "));
         let _ = writeln!(out, "Longest pause per second (ms):   {}", pauses.join(" "));
     }
     if snap.quick_drops {

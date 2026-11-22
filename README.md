@@ -20,7 +20,7 @@ and installed with one click.
 ## Getting started
 
 1. **On the radio:** `Model > Trainer`, add a Bluetooth link, enable it and select
-   **Slave** (CH1–CH8 or CH1–CH16).
+   **Slave** (for example CH1–CH8 or CH1–CH16).
 2. Download the zip from the
    [latest release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
    extract it and start `EthosBtJoystick.exe`. Windows may warn about an unknown

@@ -20,7 +20,7 @@ installeres med ett klikk.
 ## Kom i gang
 
 1. **På radioen:** `Model > Trainer`, legg til en Bluetooth-link, slå den på og velg
-   **Slave** (CH1–CH8 eller CH1–CH16).
+   **Slave** (for eksempel CH1–CH8 eller CH1–CH16).
 2. Last ned zip-filen fra
    [siste release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
    pakk den ut og start `EthosBtJoystick.exe`. Windows kan advare om ukjent utgiver
