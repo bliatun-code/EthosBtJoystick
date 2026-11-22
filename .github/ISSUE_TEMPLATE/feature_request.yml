@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an improvement or a new feature
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You can write in English or Norwegian.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like the program to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: What would you use it for?
+      description: A sentence or two about your setup (radio, simulator) helps to judge the idea.
