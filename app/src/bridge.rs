@@ -100,6 +100,8 @@ pub struct Snapshot {
     /// Times per second that new data arrives. Bluetooth delivers frames in
     /// bursts, so this can be far below the frame rate.
     pub update_rate: f32,
+    /// Average age of the newest data (what the verdict is based on), in ms.
+    pub age_ms: f32,
     /// Longest pause between frames in the last few seconds.
     pub max_gap_ms: f32,
     /// Frames per second for the last half minute, oldest first.
@@ -284,6 +286,7 @@ impl Bridge {
             quality: if live { summary.quality } else { None },
             best_rate: summary.best_rate,
             update_rate: if receiving { summary.update_rate } else { 0.0 },
+            age_ms: summary.age_ms,
             max_gap_ms: summary.max_gap_ms,
             history: summary.history,
             events: inner.events.events().to_vec(),

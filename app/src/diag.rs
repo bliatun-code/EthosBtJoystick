@@ -1,12 +1,21 @@
 //! Link diagnostics: frame timing statistics, a plain-language quality verdict
 //! and the connection event log.
 //!
-//! The radio sends trainer frames at a steady rate (roughly 80-100 per second
-//! on a good link). When the Bluetooth signal is weak, packets are lost and
-//! resent: the rate drops and - what the pilot actually feels - frames arrive
-//! in bursts with pauses in between. So the verdict is built from two things:
-//! the current rate compared with the best rate this connection has shown, and
-//! the longest pause between two frames in the last few seconds.
+//! The radio produces about 100 trainer frames a second, but Bluetooth hands
+//! them over in bursts, one per connection interval (44 ms on the link this
+//! was calibrated on), and now and then an interval is lost. What the pilot
+//! feels is how stale the stick positions are, so the verdict is built on the
+//! *average age of the newest data*: at any moment, how long ago did the last
+//! frame arrive, averaged over time. A single lost interval once a second
+//! barely moves that average (and is not felt); losing every other interval
+//! doubles or triples it (and is).
+//!
+//! Calibration, from real use:
+//! * 44 ms interval, one interval lost per second, pauses of 85-130 ms:
+//!   average age about 25 ms, and the pilot calls the response good.
+//! * Antennas missing, 35-50 frames per second and unstable: too laggy to
+//!   fly a helicopter. Losing a third to half of the intervals gives an
+//!   average age of roughly 45-65 ms.
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +40,28 @@ pub struct Second {
     /// How many times new data arrived. Bluetooth delivers frames in bursts,
     /// one burst per connection interval, so this can be far below `frames`.
     pub updates: u16,
+    /// Sum of the squared pauses (ms²) that ended in this second; gives the
+    /// average age of the data, see [`average_age_ms`].
+    pub gap_squares: u32,
+}
+
+impl Second {
+    /// Average age of the newest data during this second.
+    pub fn age_ms(&self) -> f32 {
+        average_age_ms(self.gap_squares as f32, 1000.0)
+    }
+}
+
+/// Average age of the newest data over a stretch of time: if the pauses
+/// between arrivals are g1, g2 ..., the data is on average
+/// (g1² + g2² + ...) / (2 × total time) old. Evenly spaced frames 10 ms apart
+/// give 5 ms; bursts every 44 ms give 22 ms.
+pub fn average_age_ms(gap_squares: f32, total_ms: f32) -> f32 {
+    if total_ms > 0.0 {
+        gap_squares / (2.0 * total_ms)
+    } else {
+        0.0
+    }
 }
 
 /// Why the pauses between frames are as long as they are.
@@ -55,21 +86,25 @@ pub fn pause_cause(max_gap_ms: f32, interval_ms: Option<f32>) -> PauseCause {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkQuality {
     Good,
-    /// Usable, but frames are late or missing now and then.
+    /// Usable, but the response is noticeably slower than it could be.
     Weak,
-    /// Frames are missing so often that control feels laggy.
+    /// So much data is late or missing that control feels laggy.
     Poor,
 }
 
-/// Verdict thresholds. The pauses are compared with absolute limits because
-/// that is what is felt on the sticks; the rate is compared with the best rate
-/// of this connection because different radios and adapters settle on
-/// different rates (80-100 Hz have been seen).
-pub fn classify(rate_now: f32, best_rate: f32, max_gap_ms: f32) -> LinkQuality {
-    let ratio = if best_rate > 0.0 { rate_now / best_rate } else { 1.0 };
-    if ratio >= 0.9 && max_gap_ms <= 50.0 {
+/// Average age up to which the response is good / still usable (see the
+/// calibration notes at the top of this file).
+pub const GOOD_AGE_MS: f32 = 35.0;
+pub const WEAK_AGE_MS: f32 = 55.0;
+/// A single pause this long is a hiccup worth flagging, whatever the average.
+const STALL_MS: f32 = 400.0;
+const LONG_STALL_MS: f32 = 1000.0;
+
+/// The verdict: mainly the average age of the data, plus outright stalls.
+pub fn classify(age_ms: f32, max_gap_ms: f32) -> LinkQuality {
+    if age_ms <= GOOD_AGE_MS && max_gap_ms <= STALL_MS {
         LinkQuality::Good
-    } else if ratio >= 0.6 && max_gap_ms <= 120.0 {
+    } else if age_ms <= WEAK_AGE_MS && max_gap_ms <= LONG_STALL_MS {
         LinkQuality::Weak
     } else {
         LinkQuality::Poor
@@ -86,6 +121,9 @@ pub struct Summary {
     pub update_rate: f32,
     /// Best single second of this connection.
     pub best_rate: f32,
+    /// Average age of the newest data over the same seconds (what the verdict
+    /// is based on).
+    pub age_ms: f32,
     /// Longest pause in the same window, including one that is still going on.
     pub max_gap_ms: f32,
     /// `None` until a full second has been measured.
@@ -132,6 +170,7 @@ impl FrameStats {
         let bucket = self.bucket(self.current);
         bucket.frames = bucket.frames.saturating_add(1);
         bucket.max_gap_ms = bucket.max_gap_ms.max(gap);
+        bucket.gap_squares = bucket.gap_squares.saturating_add(gap as u32 * gap as u32);
         if new_update {
             bucket.updates = bucket.updates.saturating_add(1);
         }
@@ -164,9 +203,14 @@ impl FrameStats {
             .max()
             .unwrap_or(0) as f32;
 
+        // average age of the data over the window, counting a pause in progress
+        let ongoing_ms = ongoing as f32;
+        let gap_squares = window.iter().map(|second| second.gap_squares as f32).sum::<f32>() + ongoing_ms * ongoing_ms;
+        let age_ms = average_age_ms(gap_squares, window.len() as f32 * 1000.0 + ongoing_ms);
+
         let best_rate = self.best_rate as f32;
-        let quality = (!window.is_empty() && self.last_frame.is_some()).then(|| classify(rate, best_rate, max_gap_ms));
-        Summary { history, rate, update_rate, best_rate, max_gap_ms, quality }
+        let quality = (!window.is_empty() && self.last_frame.is_some()).then(|| classify(age_ms, max_gap_ms));
+        Summary { history, rate, update_rate, best_rate, age_ms, max_gap_ms, quality }
     }
 }
 
@@ -305,28 +349,41 @@ mod tests {
         assert_eq!(summary.quality, Some(LinkQuality::Good));
     }
 
-    #[test]
-    fn rate_drop_and_pauses_degrade_the_verdict() {
-        let start = Instant::now();
-        let mut stats = FrameStats::new(start);
-        feed(&mut stats, start, 0, 4000, 10); // good: 100 Hz
-        // weak signal: bursts with 80 ms pauses, about 65 frames per second
-        let mut t = 4000;
-        while t < 8000 {
-            for i in 0..6 {
-                stats.on_frame(start + Duration::from_millis(t + i * 4));
+    /// Feeds bursts of four frames on a 43.75 ms connection interval from
+    /// `from_ms` to `to_ms`, dropping the intervals for which `lost` is true.
+    fn feed_bursts(stats: &mut FrameStats, start: Instant, from_ms: u64, to_ms: u64, lost: impl Fn(u64) -> bool) {
+        const INTERVAL_US: u64 = 43_750;
+        let mut event = from_ms * 1000 / INTERVAL_US + 1;
+        while event * INTERVAL_US < to_ms * 1000 {
+            if !lost(event) {
+                for frame in 0..4 {
+                    stats.on_frame(start + Duration::from_micros(event * INTERVAL_US + frame * 300));
+                }
             }
-            t += 92;
+            event += 1;
         }
-        let summary = stats.summary(start + Duration::from_millis(8001));
-        assert!(summary.best_rate >= 99.0);
-        assert!(summary.rate < 75.0, "rate {}", summary.rate);
-        assert!(summary.max_gap_ms >= 70.0);
+    }
+
+    /// Losing a third to half of the connection intervals is what a weak
+    /// signal does - and what was too laggy to fly with.
+    #[test]
+    fn lost_intervals_degrade_the_verdict() {
+        let start = Instant::now();
+
+        // every third interval lost: about 60 frames per second
+        let mut stats = FrameStats::new(start);
+        feed_bursts(&mut stats, start, 0, 6000, |event| event % 3 == 0);
+        let summary = stats.summary(start + Duration::from_millis(6001));
+        assert!((55.0..=65.0).contains(&summary.rate), "rate {}", summary.rate);
+        assert!((GOOD_AGE_MS..=WEAK_AGE_MS).contains(&summary.age_ms), "age {}", summary.age_ms);
         assert_eq!(summary.quality, Some(LinkQuality::Weak));
 
-        // very weak: one frame every 150 ms
-        feed(&mut stats, start, 8000, 12000, 150);
-        let summary = stats.summary(start + Duration::from_millis(12001));
+        // two of three lost: about 30 frames per second
+        let mut stats = FrameStats::new(start);
+        feed_bursts(&mut stats, start, 0, 6000, |event| event % 3 != 0);
+        let summary = stats.summary(start + Duration::from_millis(6001));
+        assert!((27.0..=34.0).contains(&summary.rate), "rate {}", summary.rate);
+        assert!(summary.age_ms > WEAK_AGE_MS, "age {}", summary.age_ms);
         assert_eq!(summary.quality, Some(LinkQuality::Poor));
     }
 
@@ -335,10 +392,21 @@ mod tests {
         let start = Instant::now();
         let mut stats = FrameStats::new(start);
         feed(&mut stats, start, 0, 3000, 10);
-        // frames stop at 3.0 s; look at 3.4 s
-        let summary = stats.summary(start + Duration::from_millis(3400));
-        assert!(summary.max_gap_ms >= 390.0);
+        // frames stop at 3.0 s; a stall of half a second is flagged, 1.5 s is poor
+        let summary = stats.summary(start + Duration::from_millis(3500));
+        assert!(summary.max_gap_ms >= 490.0);
+        assert_eq!(summary.quality, Some(LinkQuality::Weak));
+        let summary = stats.summary(start + Duration::from_millis(4500));
         assert_eq!(summary.quality, Some(LinkQuality::Poor));
+    }
+
+    #[test]
+    fn average_age_examples() {
+        // evenly spaced frames 10 ms apart: 100 pauses of 10 ms in a second
+        assert_eq!(average_age_ms(100.0 * 10.0 * 10.0, 1000.0), 5.0);
+        // one burst every 43.75 ms
+        let per_second = 1000.0 / 43.75;
+        assert!((average_age_ms(per_second * 43.75 * 43.75, 1000.0) - 21.875).abs() < 0.01);
     }
 
     #[test]
@@ -358,34 +426,38 @@ mod tests {
         assert_eq!(summary.best_rate, 40.0);
     }
 
-    /// The pattern measured on a real link with a 43.75 ms connection
-    /// interval: four frames arrive together every interval (91 frames per
-    /// second, but new data only 23 times per second), and about once a
-    /// second an interval is lost, which doubles the pause.
+    /// The pattern measured on a real link that the pilot calls good: a
+    /// 43.75 ms connection interval, four frames arriving together every
+    /// interval (91 frames per second, new data 23 times per second), and
+    /// about once a second one interval - sometimes two - is lost.
     #[test]
-    fn frames_delivered_in_bursts() {
+    fn the_measured_good_link_is_good() {
         let start = Instant::now();
         let mut stats = FrameStats::new(start);
-        let interval_us = 43_750u64;
-        let mut event = 0u64;
-        while event * interval_us < 6_000_000 {
-            if event % 23 != 22 {
-                for frame in 0..4 {
-                    stats.on_frame(start + Duration::from_micros(event * interval_us + frame * 300));
-                }
-            }
-            event += 1;
-        }
+        // one lost interval per second (85 ms pauses) ...
+        feed_bursts(&mut stats, start, 0, 6000, |event| event % 23 == 22);
         let summary = stats.summary(start + Duration::from_millis(6001));
         assert!((85.0..=93.0).contains(&summary.rate), "rate {}", summary.rate);
         assert!((20.0..=24.0).contains(&summary.update_rate), "updates {}", summary.update_rate);
         assert!((85.0..=90.0).contains(&summary.max_gap_ms), "gap {}", summary.max_gap_ms);
-        assert_eq!(summary.quality, Some(LinkQuality::Weak));
+        assert!((22.0..=27.0).contains(&summary.age_ms), "age {}", summary.age_ms);
+        assert_eq!(summary.quality, Some(LinkQuality::Good));
 
-        // ... and the pauses are explained by the interval, not by the signal
-        assert_eq!(pause_cause(summary.max_gap_ms, Some(43.75)), PauseCause::LongInterval);
-        assert_eq!(pause_cause(summary.max_gap_ms, Some(13.75)), PauseCause::Signal);
-        assert_eq!(pause_cause(summary.max_gap_ms, None), PauseCause::Signal);
+        // ... or two in a row (130 ms pauses): still good
+        let mut stats = FrameStats::new(start);
+        feed_bursts(&mut stats, start, 0, 6000, |event| event % 23 >= 21);
+        let summary = stats.summary(start + Duration::from_millis(6001));
+        assert!((125.0..=135.0).contains(&summary.max_gap_ms), "gap {}", summary.max_gap_ms);
+        assert!(summary.age_ms <= GOOD_AGE_MS, "age {}", summary.age_ms);
+        assert_eq!(summary.quality, Some(LinkQuality::Good));
+    }
+
+    #[test]
+    fn pauses_are_attributed_to_the_right_cause() {
+        // up to about two intervals: what a lost interval costs on a long interval
+        assert_eq!(pause_cause(87.0, Some(43.75)), PauseCause::LongInterval);
+        assert_eq!(pause_cause(87.0, Some(13.75)), PauseCause::Signal);
+        assert_eq!(pause_cause(87.0, None), PauseCause::Signal);
         assert_eq!(pause_cause(300.0, Some(43.75)), PauseCause::Signal);
     }
 
@@ -400,11 +472,12 @@ mod tests {
 
     #[test]
     fn classify_thresholds() {
-        assert_eq!(classify(95.0, 100.0, 20.0), LinkQuality::Good);
-        assert_eq!(classify(95.0, 100.0, 80.0), LinkQuality::Weak);
-        assert_eq!(classify(70.0, 100.0, 30.0), LinkQuality::Weak);
-        assert_eq!(classify(40.0, 100.0, 30.0), LinkQuality::Poor);
-        assert_eq!(classify(95.0, 100.0, 300.0), LinkQuality::Poor);
+        assert_eq!(classify(5.0, 12.0), LinkQuality::Good);
+        assert_eq!(classify(25.0, 130.0), LinkQuality::Good);
+        assert_eq!(classify(45.0, 130.0), LinkQuality::Weak);
+        assert_eq!(classify(25.0, 600.0), LinkQuality::Weak); // a stall
+        assert_eq!(classify(70.0, 200.0), LinkQuality::Poor);
+        assert_eq!(classify(25.0, 1500.0), LinkQuality::Poor); // a long stall
     }
 
     #[test]

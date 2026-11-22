@@ -47,9 +47,10 @@ kobles det til igjen av seg selv.
 Fanen **Diagnose** viser hvor god Bluetooth-forbindelsen er, og hjelper deg å finne ut
 hvorfor en forbindelse oppfører seg dårlig:
 
-- **Kvalitet** – god, svak eller dårlig, vurdert ut fra oppdateringsfrekvensen og det
-  lengste oppholdet mellom to rammer. Samme vurdering står ved siden av frekvensen
-  til venstre.
+- **Kvalitet** – god, svak eller dårlig, vurdert ut fra *forsinkelsen i snitt*: hvor
+  gamle de nyeste spakverdiene er i gjennomsnitt. Bluetooth leverer rammene i klumper,
+  så dette sier mer om responsen enn oppdateringsfrekvensen gjør. Samme vurdering
+  står ved siden av frekvensen til venstre.
 - **Hendelser** – hver til- og frakobling, med årsak og hvor lenge forbindelsen varte.
 - **Bluetooth-adapteren i PC-en** – navn, Bluetooth-versjon og alderen på driveren.
 - **Kopier diagnostikk** legger alt dette på utklippstavlen som tekst, uten
@@ -158,9 +159,9 @@ tillegg et utkast til release med zip-filen vedlagt.
 - **«Tilkoblet, venter på data»:** radioen er tilkoblet, men sender ikke
   trainer-rammer. Sjekk trainer-oppsettet på modellen.
 - **Styringen føles treg eller rykkete:** se på fanen Diagnose. En frekvens godt under
-  den beste, eller opphold over omtrent 50 ms, betyr svakt Bluetooth-signal. Flytt
-  radioen nærmere, og sjekk på en stasjonær PC at antennene til WiFi/Bluetooth-kortet
-  er montert – uten dem er rekkevidden svært kort.
+  den beste sammen med en forsinkelse i snitt over omtrent 35 ms betyr svakt
+  Bluetooth-signal. Flytt radioen nærmere, og sjekk på en stasjonær PC at antennene
+  til WiFi/Bluetooth-kortet er montert – uten dem er rekkevidden svært kort.
 - **Forbindelsen faller etter noen sekunder, gang på gang:** det tyder på
   Bluetooth-adapteren i PC-en eller driveren dens. Prøv en nyere driver (Microsoft
   Update-katalogen kan ha en selv om Windows Update ikke tilbyr noen) eller en annen

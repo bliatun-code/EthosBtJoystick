@@ -8,7 +8,9 @@ use eframe::egui::{self, Color32, RichText};
 use crate::adapter::{self, AdapterInfo};
 use crate::bridge::{LinkState, Snapshot};
 use crate::config::{Config, Lang};
-use crate::diag::{pause_cause, DropReason, Event, EventKind, LinkQuality, PauseCause, HISTORY_SECONDS};
+use crate::diag::{
+    pause_cause, DropReason, Event, EventKind, LinkQuality, PauseCause, GOOD_AGE_MS, HISTORY_SECONDS, WEAK_AGE_MS,
+};
 use crate::joystick::{format_driver_version, DriverStatus};
 use crate::ui::{link_error_text, status_line, tr, GRAY, GREEN, RED, YELLOW};
 
@@ -218,11 +220,14 @@ fn rate_graph(ui: &mut egui::Ui, snap: &Snapshot) {
             egui::pos2(x + 1.0, rect.bottom() - 2.0 - height),
             egui::pos2(x + BAR - 1.0, rect.bottom() - 2.0),
         );
-        // colour by the longest pause in that second
-        let color = match second.max_gap_ms {
-            0..=50 => GREEN,
-            51..=120 => YELLOW,
-            _ => RED,
+        // colour by how stale the data was in that second (same limits as the verdict)
+        let age = second.age_ms();
+        let color = if age <= GOOD_AGE_MS {
+            GREEN
+        } else if age <= WEAK_AGE_MS {
+            YELLOW
+        } else {
+            RED
         };
         painter.rect_filled(bar, 1.0, color.gamma_multiply(0.8));
     }
@@ -238,7 +243,7 @@ pub fn show(
 ) {
     ui.horizontal(|ui| {
         if ui.button(RichText::new(tr(lang, "Kopier diagnostikk", "Copy diagnostics")).strong()).clicked() {
-            ui.ctx().copy_text(report(snap, driver_status));
+            ui.ctx().copy_text(report(snap, driver_status, config.fast_connection));
         }
         ui.label(
             RichText::new(tr(
@@ -256,28 +261,41 @@ pub fn show(
     match (snap.link, snap.quality) {
         (LinkState::Receiving | LinkState::SignalLost, Some(quality)) => {
             let text = format!(
-                "{}: {:.0} Hz ({} {:.0}), {} {:.0} ms",
+                "{}: {} {:.0} ms, {:.0} Hz ({} {:.0})",
                 capitalised(quality_word(lang, quality)),
+                tr(lang, "forsinkelse i snitt", "average delay"),
+                snap.age_ms,
                 snap.frame_rate,
                 tr(lang, "beste", "best"),
                 snap.best_rate,
-                tr(lang, "lengste opphold", "longest pause"),
-                snap.max_gap_ms
             );
             status_line(ui, quality_color(quality), &text);
             // Bluetooth hands the frames over in bursts, one per connection
             // interval: the simulator only gets new values that often.
+            let mut details = format!("{} {:.0} ms.", tr(lang, "Lengste opphold", "Longest pause"), snap.max_gap_ms);
             if bursty(snap) {
-                ui.label(format!(
-                    "{} {:.0} {}",
+                details.push_str(&format!(
+                    " {} {:.0} {}",
                     tr(lang, "Rammene kommer i klumper: nye verdier", "The frames arrive in bursts: new values"),
                     snap.update_rate,
                     tr(lang, "ganger per sekund.", "times per second.")
                 ));
             }
-            let cause = pause_cause(snap.max_gap_ms, snap.connection.map(|connection| connection.interval_ms()));
-            if let Some(advice) = quality_advice(lang, quality, cause) {
+            ui.label(RichText::new(details).weak());
+
+            let interval = snap.connection.map(|connection| connection.interval_ms());
+            if let Some(advice) = quality_advice(lang, quality, pause_cause(snap.max_gap_ms, interval)) {
                 ui.label(RichText::new(advice).color(quality_color(quality)));
+            } else if interval.is_some_and(|interval| interval >= 25.0) && !config.fast_connection {
+                // good as it is, but there is room for a quicker response
+                ui.label(
+                    RichText::new(tr(
+                        lang,
+                        "Tips: med et kortere forbindelsesintervall blir forsinkelsen mindre. Prøv «Be Windows om raskest mulig forbindelse» nedenfor.",
+                        "Tip: a shorter connection interval gives a smaller delay. Try “Ask Windows for the fastest connection” below.",
+                    ))
+                    .weak(),
+                );
             }
         }
         (LinkState::Receiving | LinkState::SignalLost | LinkState::Connected, None) => {
@@ -308,8 +326,8 @@ pub fn show(
         ui.label(
             RichText::new(tr(
                 lang,
-                "Rammer per sekund, siste 30 s.\nFargen viser lengste opphold i sekundet:\ngrønn under 50 ms, gul under 120 ms, rød over.",
-                "Frames per second, last 30 s.\nThe colour shows the longest pause in that second:\ngreen below 50 ms, yellow below 120 ms, red above.",
+                "Rammer per sekund, siste 30 s.\nFargen viser forsinkelsen i snitt det sekundet:\ngrønn under 35 ms, gul under 55 ms, rød over.",
+                "Frames per second, last 30 s.\nThe colour shows the average delay in that second:\ngreen below 35 ms, yellow below 55 ms, red above.",
             ))
             .small()
             .weak(),
@@ -410,7 +428,7 @@ fn capitalised(word: &str) -> String {
 
 /// The text behind "Copy diagnostics". Always in English (it is meant for
 /// whoever maintains the program) and without Bluetooth addresses.
-pub fn report(snap: &Snapshot, driver_status: DriverStatus) -> String {
+pub fn report(snap: &Snapshot, driver_status: DriverStatus, fast_connection: bool) -> String {
     let lang = Lang::En;
     let mut out = String::new();
     let _ = writeln!(out, "Ethos BT Joystick {} - diagnostics", env!("CARGO_PKG_VERSION"));
@@ -455,10 +473,11 @@ pub fn report(snap: &Snapshot, driver_status: DriverStatus) -> String {
         let quality = snap.quality.map_or("measuring", |quality| quality_word(lang, quality));
         let _ = writeln!(
             out,
-            "Link: {} channels, {:.0} Hz now, best {:.0} Hz, new data {:.0} times/s, longest pause {:.0} ms, quality {quality}",
-            snap.channel_count, snap.frame_rate, snap.best_rate, snap.update_rate, snap.max_gap_ms
+            "Link: {} channels, {:.0} Hz now, best {:.0} Hz, new data {:.0} times/s, average delay {:.0} ms, longest pause {:.0} ms, quality {quality}",
+            snap.channel_count, snap.frame_rate, snap.best_rate, snap.update_rate, snap.age_ms, snap.max_gap_ms
         );
     }
+    let _ = writeln!(out, "Fastest connection requested: {}", if fast_connection { "yes" } else { "no" });
     if let Some(connection) = &snap.connection {
         let _ = writeln!(
             out,
@@ -474,8 +493,10 @@ pub fn report(snap: &Snapshot, driver_status: DriverStatus) -> String {
         let rates: Vec<String> = snap.history.iter().map(|second| second.frames.to_string()).collect();
         let updates: Vec<String> = snap.history.iter().map(|second| second.updates.to_string()).collect();
         let pauses: Vec<String> = snap.history.iter().map(|second| second.max_gap_ms.to_string()).collect();
+        let delays: Vec<String> = snap.history.iter().map(|second| format!("{:.0}", second.age_ms())).collect();
         let _ = writeln!(out, "Frames per second, oldest first: {}", rates.join(" "));
         let _ = writeln!(out, "New data per second:             {}", updates.join(" "));
+        let _ = writeln!(out, "Average delay per second (ms):   {}", delays.join(" "));
         let _ = writeln!(out, "Longest pause per second (ms):   {}", pauses.join(" "));
     }
     if snap.quick_drops {
@@ -597,7 +618,7 @@ mod tests {
         decoder.push(&encode_frame(&[1500; 16]), |frame| bridge.on_frame(frame));
         bridge.connection_ended(DropReason::LinkLost);
 
-        let text = report(&bridge.snapshot(), DriverStatus::Running);
+        let text = report(&bridge.snapshot(), DriverStatus::Running, false);
         for expected in [
             "Ethos BT Joystick",
             "Windows build:",

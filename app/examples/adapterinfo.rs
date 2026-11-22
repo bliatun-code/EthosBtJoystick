@@ -14,5 +14,5 @@ fn main() {
     let bridge = Bridge::new(Mapping::default());
     bridge.set_adapter(adapter::query());
     bridge.ensure_joystick();
-    print!("{}", ui_diag::report(&bridge.snapshot(), driver_status()));
+    print!("{}", ui_diag::report(&bridge.snapshot(), driver_status(), false));
 }

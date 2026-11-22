@@ -48,9 +48,10 @@ connection drops, it reconnects by itself.
 The **Diagnostics** tab shows how good the Bluetooth link is, and helps to find out why
 a connection misbehaves:
 
-- **Link quality** – good, weak or poor, judged from the frame rate and the longest
-  pause between two frames. The same verdict is shown next to the frame rate on the
-  left.
+- **Link quality** – good, weak or poor, judged from the *average delay*: how old the
+  newest stick positions are on average. Bluetooth delivers the frames in bursts, so
+  this says more about the response than the frame rate does. The same verdict is
+  shown next to the frame rate on the left.
 - **Events** – every connection and disconnection, with the reason and how long the
   connection lasted.
 - **The PC's Bluetooth adapter** – its name, Bluetooth version and the age of its
@@ -163,9 +164,9 @@ also creates a draft release with the zip attached.
 - **“Connected, waiting for data”:** the radio is connected but is not sending trainer
   frames. Check the trainer setup of the model.
 - **Control feels laggy or jerky:** look at the Diagnostics tab. A frame rate well
-  below the best rate, or pauses above about 50 ms, mean a weak Bluetooth signal. Move
-  the radio closer, and on a desktop PC check that the antennas of the Wi-Fi/Bluetooth
-  card are fitted – without them the range is very short.
+  below the best rate together with an average delay above about 35 ms means a weak
+  Bluetooth signal. Move the radio closer, and on a desktop PC check that the antennas
+  of the Wi-Fi/Bluetooth card are fitted – without them the range is very short.
 - **The connection drops after a few seconds, again and again:** that points to the
   PC's Bluetooth adapter or its driver. Try a newer driver (the Microsoft Update
   Catalog may have one when Windows Update offers none) or another adapter.
