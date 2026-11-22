@@ -39,7 +39,13 @@ fn main() {
         return;
     }
 
-    if let Err(error) = ui::run(has("--demo"), has(autostart::ARG_MINIMIZED)) {
+    let options = ui::Options {
+        demo: has("--demo"),
+        demo_weak: has("--demo-weak"),
+        minimized: has(autostart::ARG_MINIMIZED),
+        diagnostics: has("--diagnostics"),
+    };
+    if let Err(error) = ui::run(options) {
         let text: Vec<u16> = format!("Could not start the user interface:\n{error}\0").encode_utf16().collect();
         unsafe {
             MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), w!("Ethos BT Joystick"), MB_OK);

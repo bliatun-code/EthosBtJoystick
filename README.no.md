@@ -42,6 +42,19 @@ kobles det til igjen av seg selv.
   avslutte.
 - Starter du programmet en gang til, kommer bare det som allerede kjører fram.
 
+### Diagnose
+
+Fanen **Diagnose** viser hvor god Bluetooth-forbindelsen er, og hjelper deg å finne ut
+hvorfor en forbindelse oppfører seg dårlig:
+
+- **Kvalitet** – god, svak eller dårlig, vurdert ut fra oppdateringsfrekvensen og det
+  lengste oppholdet mellom to rammer. Samme vurdering står ved siden av frekvensen
+  til venstre.
+- **Hendelser** – hver til- og frakobling, med årsak og hvor lenge forbindelsen varte.
+- **Bluetooth-adapteren i PC-en** – navn, Bluetooth-versjon og alderen på driveren.
+- **Kopier diagnostikk** legger alt dette på utklippstavlen som tekst, uten
+  Bluetooth-adresser, klart til å limes inn i en e-post eller feilrapport.
+
 ### Kanaler, akser og knapper
 
 - **Akser:** hver av de 8 aksene (X, Y, Z, Rx, Ry, Rz, Slider, Dial) kan hente verdien
@@ -135,7 +148,7 @@ tillegg et utkast til release med zip-filen vedlagt.
 | `app\` | Appen (Rust, egui). `cargo test` kjører enhetstestene. |
 | `driver\` | Driveren (C), INF-fil og byggeskript. |
 | `tools\` | Skript for å hente WDK og pakke en release. |
-| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag) og `joycheck` (skriver til den installerte driveren og leser tilbake). |
+| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag), `joycheck` (skriver til den installerte driveren og leser tilbake) og `adapterinfo` (skriver ut diagnoserapporten). |
 
 ## Feilsøking
 
@@ -144,6 +157,14 @@ tillegg et utkast til release med zip-filen vedlagt.
   Kryss eventuelt av for «Vis enheter uten navn».
 - **«Tilkoblet, venter på data»:** radioen er tilkoblet, men sender ikke
   trainer-rammer. Sjekk trainer-oppsettet på modellen.
+- **Styringen føles treg eller rykkete:** se på fanen Diagnose. En frekvens godt under
+  den beste, eller opphold over omtrent 50 ms, betyr svakt Bluetooth-signal. Flytt
+  radioen nærmere, og sjekk på en stasjonær PC at antennene til WiFi/Bluetooth-kortet
+  er montert – uten dem er rekkevidden svært kort.
+- **Forbindelsen faller etter noen sekunder, gang på gang:** det tyder på
+  Bluetooth-adapteren i PC-en eller driveren dens. Prøv en nyere driver (Microsoft
+  Update-katalogen kan ha en selv om Windows Update ikke tilbyr noen) eller en annen
+  adapter.
 - **Driveren «startet ikke (kode …)»:** åpne installasjonsloggen i appen. Prøv
   «Installer på nytt». Koden er den samme som Enhetsbehandling viser.
 - **Simulatoren finner ikke joysticken:** sjekk først med «Test i Windows (joy.cpl)».

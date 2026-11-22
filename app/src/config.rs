@@ -164,6 +164,8 @@ pub struct Config {
     /// The close button hides the window in the notification area instead of
     /// ending the program.
     pub close_to_tray: bool,
+    /// Ask Windows for the shortest Bluetooth connection interval (experimental).
+    pub fast_connection: bool,
     /// Also list Bluetooth devices that do not advertise a name.
     pub show_unnamed: bool,
     pub mapping: Mapping,
@@ -176,6 +178,7 @@ impl Default for Config {
             device: None,
             auto_connect: true,
             close_to_tray: false,
+            fast_connection: false,
             show_unnamed: false,
             mapping: Mapping::default(),
         }

@@ -26,6 +26,12 @@ pub fn format_address(address: u64) -> String {
     format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", b[2], b[3], b[4], b[5], b[6], b[7])
 }
 
+/// Local wall-clock time as (hour, minute, second).
+pub fn local_time() -> (u8, u8, u8) {
+    let now = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    (now.wHour as u8, now.wMinute as u8, now.wSecond as u8)
+}
+
 /// Standard base64 (used for `powershell -EncodedCommand`).
 pub fn base64(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
