@@ -6,6 +6,7 @@ pub mod ble;
 pub mod bridge;
 pub mod config;
 pub mod diag;
+pub mod icon;
 pub mod installer;
 pub mod joystick;
 pub mod protocol;

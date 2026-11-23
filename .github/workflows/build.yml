@@ -2,7 +2,8 @@ name: Build
 
 # Builds the driver and the app and runs the tests for every change.
 # Pushing a version tag (v1.2.3) additionally creates a *draft* release with
-# the packaged zip attached; review it on GitHub and publish it by hand.
+# the packaged zip and the installer attached; review it on GitHub and publish
+# it by hand.
 
 on:
   push:
@@ -52,15 +53,23 @@ jobs:
         shell: powershell
         run: ./build.ps1 -Test
 
-      - name: Package the release zip
+      # The build image has Inno Setup 6 preinstalled; fetch it only if that changes.
+      - name: Fetch Inno Setup if the build image does not have it
+        shell: powershell
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { ./tools/get-innosetup.ps1 }
+
+      - name: Package the release zip and the installer
         shell: powershell
         run: ./tools/package-release.ps1
 
-      - name: Upload the zip
+      - name: Upload the zip and the installer
         uses: actions/upload-artifact@v7
         with:
           name: EthosBtJoystick-win-x64
-          path: dist/EthosBtJoystick-*.zip
+          path: |
+            dist/EthosBtJoystick-*.zip
+            dist/EthosBtJoystick-*-setup.exe
           if-no-files-found: error
 
   release:
@@ -75,12 +84,12 @@ jobs:
         with:
           name: EthosBtJoystick-win-x64
 
-      - name: Create a draft release with the zip
+      - name: Create a draft release with the zip and the installer
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum EthosBtJoystick-*.zip
-          gh release create "$GITHUB_REF_NAME" EthosBtJoystick-*.zip \
+          sha256sum EthosBtJoystick-*.zip EthosBtJoystick-*-setup.exe
+          gh release create "$GITHUB_REF_NAME" EthosBtJoystick-*.zip EthosBtJoystick-*-setup.exe \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
