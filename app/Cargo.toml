@@ -1,6 +1,6 @@
 [package]
 name = "ethos-bt-joystick"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Use a FrSky Ethos radio as a wireless (Bluetooth) joystick for simulators on Windows"
 license = "MIT"
