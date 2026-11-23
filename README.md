@@ -11,9 +11,9 @@ The radio sends its control channels through its Bluetooth trainer function. The
 receives the channels and presents them to Windows as an ordinary joystick
 (“Ethos BT Joystick”) with 8 axes and up to 32 buttons.
 
-Everything is in **a single exe file**. Neither vJoy nor any other third-party driver
-is used: the virtual joystick is a small driver of its own that is embedded in the exe
-and installed with one click.
+Everything is in **a single exe file**, which you get with an installer or in a zip.
+Neither vJoy nor any other third-party driver is used: the virtual joystick is a small
+driver of its own that is embedded in the exe.
 
 ![Screenshot](docs/screenshot.png)
 
@@ -21,14 +21,18 @@ and installed with one click.
 
 1. **On the radio:** `Model > Trainer`, add a Bluetooth link, enable it and select
    **Slave** (for example CH1–CH8 or CH1–CH16).
-2. Download the zip from the
-   [latest release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest),
-   extract it and start `EthosBtJoystick.exe`. Windows may warn about an unknown
-   publisher the first time, because the program is not code signed.
-3. Click **Install driver …** (first time only) and approve the UAC prompt.
-4. Click **Search for radio**, select the radio in the list and click **Connect**.
-   Pairing in Windows is not needed.
-5. Select **Ethos BT Joystick** as the controller in the simulator and calibrate it
+2. Download one of these from the
+   [latest release](https://github.com/bliatun-code/EthosBtJoystick/releases/latest):
+   - **The installer** (`…-setup.exe`) puts the program in the Start menu and installs
+     the driver in the same step. Approve the UAC prompt.
+   - **The zip** needs no installation: extract it, start `EthosBtJoystick.exe`, click
+     **Install driver …** (first time only) and approve the UAC prompt.
+
+   Windows may warn about an unknown publisher the first time, because the program is
+   not code signed: click *More info* and then *Run anyway*.
+3. In the program, click **Search for radio**, select the radio in the list and click
+   **Connect**. Pairing in Windows is not needed.
+4. Select **Ethos BT Joystick** as the controller in the simulator and calibrate it
    there.
 
 The app remembers the radio and connects automatically the next time. If the
@@ -93,8 +97,8 @@ A virtual joystick always requires a driver on Windows. This one is a
 **user-mode driver (UMDF 2)** – it runs as an ordinary process (`WUDFHost.exe`), not
 in the Windows kernel.
 
-Windows only installs signed driver packages. When you click “Install driver”, this
-happens (with administrator rights):
+Windows only installs signed driver packages. When you click “Install driver” in the
+program, or let the installer do it, this happens (with administrator rights):
 
 1. The driver package is unpacked to `C:\Program Files\EthosBtJoystick\driver`.
 2. A self-signed certificate is created **on your PC**, the driver catalog is signed
@@ -104,9 +108,19 @@ happens (with administrator rights):
    used to sign anything else – neither by you nor by anyone else.
 4. The device `root\EthosBtJoystick` is created and the driver is installed on it.
 
-**Uninstall** removes the device, the driver package and the certificate again.
-The log of the last installation is in `C:\Program Files\EthosBtJoystick\install.log`
-and is also shown in the app.
+**Uninstall** in the program removes the device, the driver package and the
+certificate again. The log of the last installation is in
+`C:\Program Files\EthosBtJoystick\install.log` and is also shown in the app.
+
+### Uninstalling
+
+- **Installed with the installer:** uninstall *Ethos BT Joystick* under
+  *Settings > Apps > Installed apps*. That removes the program, the driver and the
+  certificate.
+- **Used from the zip:** click **Uninstall** in the program to remove the driver and
+  the certificate, then delete the folder.
+
+Your settings in `%APPDATA%\EthosBtJoystick` are kept in both cases.
 
 ## How it works
 
@@ -150,18 +164,28 @@ powershell -ExecutionPolicy Bypass -File tools\get-wdk.ps1
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-The result ends up in `dist\EthosBtJoystick.exe`. `tools\package-release.ps1` then
-packs it into a release zip together with the license files.
+The result ends up in `dist\EthosBtJoystick.exe`. To package a release as well:
+
+```powershell
+# once: fetch Inno Setup 6 (about 11 MB) into tools\innosetup – installs nothing
+powershell -ExecutionPolicy Bypass -File tools\get-innosetup.ps1
+
+# make the zip and the installer in dist\ (add -NoInstaller for the zip only)
+powershell -ExecutionPolicy Bypass -File tools\package-release.ps1
+```
+
+An Inno Setup 6 that is already installed is used too.
 
 GitHub Actions does the same for every push and pull request
 ([workflow](.github/workflows/build.yml)). Pushing a version tag such as `v1.2.0`
-also creates a draft release with the zip attached.
+also creates a draft release with the zip and the installer attached.
 
 | Folder | Contents |
 | --- | --- |
 | `app\` | The app (Rust, egui). `cargo test` runs the unit tests. |
 | `driver\` | The driver (C), INF file and build script. |
-| `tools\` | Scripts that fetch the WDK and package a release. |
+| `installer\` | The Inno Setup script for the installer. |
+| `tools\` | Scripts that fetch the WDK and Inno Setup, draw the icon and package a release. |
 | `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup), `joycheck` (writes to the installed driver and reads back) and `adapterinfo` (prints the diagnostics report). |
 
 ## Troubleshooting
@@ -190,8 +214,8 @@ and paste the text from **Copy diagnostics** on the Diagnostics tab.
 
 - The driver requires **Windows 11** (64-bit). The project has only been built and
   tried on Windows 11.
-- Smart App Control or company policies that block unsigned programs can stop both
-  the app and the driver.
+- Smart App Control or company policies that block unsigned programs can stop the
+  installer, the app and the driver.
 
 ## Thanks to
 
