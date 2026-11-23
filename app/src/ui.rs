@@ -14,6 +14,7 @@ use crate::autostart;
 use crate::ble::{self, BleHandle, Command};
 use crate::bridge::{Bridge, ConnectionInfo, LinkError, LinkState, Snapshot};
 use crate::diag::{EventKind, LinkQuality};
+use crate::icon;
 use crate::tray::{self, CloseFlags, Tray, TrayHandle};
 use crate::ui_diag;
 use crate::config::{
@@ -71,7 +72,8 @@ pub fn run(start: Options) -> eframe::Result<()> {
             .with_title("Ethos BT Joystick")
             .with_inner_size([1000.0, 780.0])
             .with_min_inner_size([860.0, 540.0])
-            .with_icon(app_icon()),
+            // Windows scales this down for the title bar and the taskbar
+            .with_icon(app_icon(64)),
         ..Default::default()
     };
 
@@ -219,7 +221,7 @@ impl App {
                     Tray::remove_icon(tray_window.get());
                     std::process::exit(0);
                 });
-                Tray::new(main_window, &app_icon().rgba, 32, tray_language.clone(), close_flags.clone(), on_exit)
+                Tray::new(main_window, &app_icon(32).rgba, 32, tray_language.clone(), close_flags.clone(), on_exit)
             })
             .flatten();
         if let Some(tray) = &tray {
@@ -1182,30 +1184,11 @@ pub(crate) fn link_error_text(lang: Lang, error: &LinkError) -> String {
     }
 }
 
-/// 32x32 window icon: blue rounded square with a white "stick".
-fn app_icon() -> egui::IconData {
-    const SIZE: usize = 32;
-    let mut rgba = vec![0u8; SIZE * SIZE * 4];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let (fx, fy) = (x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0);
-            // rounded square
-            let (dx, dy) = ((fx.abs() - 10.0).max(0.0), (fy.abs() - 10.0).max(0.0));
-            let inside = (dx * dx + dy * dy).sqrt() <= 5.5;
-            // gimbal ring + stick knob
-            let r = (fx * fx + fy * fy).sqrt();
-            let ring = (r - 9.5).abs() <= 1.2;
-            let knob = ((fx - 3.0).powi(2) + (fy + 3.0).powi(2)).sqrt() <= 4.2;
-
-            let pixel = &mut rgba[(y * SIZE + x) * 4..(y * SIZE + x) * 4 + 4];
-            if inside {
-                let color = if ring || knob { [255, 255, 255] } else { [0x3B, 0x8E, 0xEA] };
-                pixel[..3].copy_from_slice(&color);
-                pixel[3] = 255;
-            }
-        }
-    }
-    egui::IconData { rgba, width: SIZE as u32, height: SIZE as u32 }
+/// The program icon in one of the sizes of the icon file (see `icon.rs`).
+fn app_icon(size: u32) -> egui::IconData {
+    // the sizes used here are checked by the tests in icon.rs
+    let rgba = icon::rgba(size).expect("the icon file has this size");
+    egui::IconData { rgba, width: size, height: size }
 }
 
 /// Demo mode (`--demo`): feeds synthetic 16 channel frames through the real
