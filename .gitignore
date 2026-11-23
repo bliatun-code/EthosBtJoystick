@@ -5,3 +5,7 @@
 
 # downloaded WDK package (tools\get-wdk.ps1 fetches it again)
 /tools/wdk-nuget/
+
+# downloaded Inno Setup (tools\get-innosetup.ps1 fetches it again)
+/tools/innosetup/
+/tools/innosetup-download/

@@ -1,5 +1,5 @@
 <#
-    Packages a built app into a release zip:
+    Packages a built app for a release, as a zip and as an installer:
 
         dist\EthosBtJoystick-v<version>-win-x64.zip
             EthosBtJoystick.exe
@@ -8,14 +8,19 @@
             LICENSE-driver-MS-PL.txt      (the embedded driver)
             THIRD-PARTY-LICENSES.txt      (Rust crates and fonts built into the exe)
 
-    Run build.ps1 first. The third-party list is generated from `cargo tree`
-    and the license files that ship inside each crate.
+        dist\EthosBtJoystick-v<version>-win-x64-setup.exe
+            the same exe and license files, installed with installer\EthosBtJoystick.iss
 
-    Usage:  powershell -ExecutionPolicy Bypass -File tools\package-release.ps1
+    Run build.ps1 first. The third-party list is generated from `cargo tree`
+    and the license files that ship inside each crate. The installer needs
+    Inno Setup 6: run tools\get-innosetup.ps1 once, or install it yourself.
+
+    Usage:  powershell -ExecutionPolicy Bypass -File tools\package-release.ps1 [-NoInstaller]
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = ''
+    [string]$Version = '',
+    [switch]$NoInstaller   # only make the zip
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +36,26 @@ if (-not $Version) {
     $Version = $match.Matches[0].Groups[1].Value
 }
 $name = "EthosBtJoystick-v$Version-win-x64"
+
+# Find what the installer needs before any work is done.
+$iss = Join-Path $root 'installer\EthosBtJoystick.iss'
+$iscc = $null
+if (-not $NoInstaller) {
+    $candidates = @(
+        (Join-Path $here 'innosetup\ISCC.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+        (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+    )
+    $onPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($onPath) { $candidates += $onPath.Source }
+    $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $iscc) {
+        throw 'Inno Setup (ISCC.exe) was not found. Run tools\get-innosetup.ps1 once, or pass -NoInstaller to make only the zip.'
+    }
+    # Without the byte order mark Inno Setup would read the Norwegian texts as ANSI.
+    $mark = [IO.File]::ReadAllBytes($iss) | Select-Object -First 3
+    if (($mark -join ' ') -ne '239 187 191') { throw "$iss must be saved as UTF-8 with a byte order mark." }
+}
 
 # --- third-party components ------------------------------------------------
 # (run through cmd so cargo's progress output on stderr cannot become an error)
@@ -137,6 +162,12 @@ foreach ($entry in $texts.Values) {
     foreach ($textLine in ($entry.Text -split "`n")) { $out.Add($textLine.TrimEnd()) }
 }
 
+Write-Host ("Components: {0}, distinct license texts: {1}" -f $components.Count, $texts.Count)
+if ($withoutText.Count -gt 0) {
+    # never ship anything with an incomplete license file
+    throw ("No license text found for: " + ($withoutText -join ', ') + " - add it to tools\third-party-extra.")
+}
+
 # --- stage + zip -----------------------------------------------------------
 $dist  = Join-Path $root 'dist'
 $stage = Join-Path $dist "release\$name"
@@ -180,12 +211,17 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dist 'release'), $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
 
-Write-Host ''
-Write-Host ("Components: {0}, distinct license texts: {1}" -f $components.Count, $texts.Count)
-if ($withoutText.Count -gt 0) {
-    # never ship a zip with an incomplete license file
-    Remove-Item $zip -Force
-    throw ("No license text found for: " + ($withoutText -join ', ') + " - add it to tools\third-party-extra.")
+# --- installer -------------------------------------------------------------
+$setup = Join-Path $dist "$name-setup.exe"
+if (Test-Path $setup) { Remove-Item $setup -Force }
+if (-not $NoInstaller) {
+    & $iscc /Qp "/DAppVersion=$Version" "/DStageDir=$stage" "/DOutputDir=$dist" "/DOutputName=$name-setup" $iss
+    if ($LASTEXITCODE -ne 0) { throw "Building the installer failed (ISCC exit code $LASTEXITCODE)." }
+    if (-not (Test-Path $setup)) { throw "The installer was not created: $setup" }
 }
-Write-Host ("Zip:    {0}  ({1:N0} bytes)" -f $zip, (Get-Item $zip).Length) -ForegroundColor Green
-Write-Host ("SHA256: {0}" -f (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())
+
+Write-Host ''
+foreach ($file in @($zip, $setup) | Where-Object { Test-Path $_ }) {
+    Write-Host ("{0}  ({1:N0} bytes)" -f $file, (Get-Item $file).Length) -ForegroundColor Green
+    Write-Host ("  SHA256: {0}" -f (Get-FileHash $file -Algorithm SHA256).Hash.ToLower())
+}
