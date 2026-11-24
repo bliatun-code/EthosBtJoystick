@@ -46,6 +46,18 @@ kobles det til igjen av seg selv.
   avslutte.
 - Starter du programmet en gang til, kommer bare det som allerede kjører fram.
 
+### Nye versjoner
+
+Programmet spør GitHub om nyeste publiserte versjon når det starter, og deretter en
+gang i døgnet. Finnes det en nyere, står det på en linje øverst i vinduet, med en
+**Last ned**-knapp som åpner utgivelsessiden i nettleseren. Ligger vinduet i
+systemstatusfeltet, kommer det i stedet et varsel ved ikonet.
+
+Ingenting lastes ned eller installeres av seg selv. Spørsmålet er en vanlig
+nettforespørsel til `api.github.com`; bortsett fra navnet på programmet inneholder
+den ingenting fra PC-en din. Slå det av med **Se etter nye versjoner automatisk**
+under *Innstillinger* – **Sjekk nå** virker fortsatt.
+
 ### Diagnose
 
 Fanen **Diagnose** viser hvor god Bluetooth-forbindelsen er, og hjelper deg å finne ut
@@ -84,7 +96,9 @@ rundt 100 ms til rundt 30 ms. Blir en forbindelse mindre stabil av det, slår du
 Knappen **Test i Windows (joy.cpl)** åpner Windows' egen spillkontroller-test.
 
 Innstillingene lagres i `%APPDATA%\EthosBtJoystick\config.json`.
-`EthosBtJoystick.exe --demo` viser vinduet med simulerte kanaler, uten radio.
+`EthosBtJoystick.exe --demo` viser vinduet med simulerte kanaler, uten radio;
+`--demo-update` gjør det samme og viser i tillegg hvordan varselet om ny versjon ser
+ut.
 
 ## Hva gjør driverinstallasjonen?
 
@@ -182,7 +196,7 @@ tillegg et utkast til release med zip-filen og installeren vedlagt.
 | `driver\` | Driveren (C), INF-fil og byggeskript. |
 | `installer\` | Inno Setup-skriptet for installeren. |
 | `tools\` | Skript for å hente WDK og Inno Setup, tegne ikonet og pakke en release. |
-| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag), `joycheck` (skriver til den installerte driveren og leser tilbake) og `adapterinfo` (skriver ut diagnoserapporten). |
+| `app\examples\` | Utviklerverktøy: `scan` (Bluetooth-søk), `hidtree` (HID-oppslag), `joycheck` (skriver til den installerte driveren og leser tilbake), `adapterinfo` (skriver ut diagnoserapporten) og `updatecheck` (spør GitHub om nyeste versjon). |
 
 ## Feilsøking
 
