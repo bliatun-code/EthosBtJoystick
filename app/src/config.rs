@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::joystick::{JoyState, AXIS_COUNT, AXIS_MAX, BUTTON_COUNT};
+use crate::update::Version;
 
 /// Pulse width range sent by the radio (µs).
 pub const US_MIN: u16 = 988;
@@ -169,6 +170,13 @@ pub struct Config {
     pub fast_connection: bool,
     /// Also list Bluetooth devices that do not advertise a name.
     pub show_unnamed: bool,
+    /// Ask GitHub for the newest version at startup and then once a day.
+    pub check_updates: bool,
+    /// The new version the user has been told about, so the notification
+    /// bubble comes once per version and not at every start.
+    pub update_announced: Option<Version>,
+    /// The new version whose line in the window the user has closed.
+    pub update_dismissed: Option<Version>,
     pub mapping: Mapping,
 }
 
@@ -181,6 +189,9 @@ impl Default for Config {
             close_to_tray: false,
             fast_connection: true,
             show_unnamed: false,
+            check_updates: true,
+            update_announced: None,
+            update_dismissed: None,
             mapping: Mapping::default(),
         }
     }
@@ -285,5 +296,20 @@ mod tests {
         assert!(partial.fast_connection);
         let off: Config = serde_json::from_str(r#"{"fast_connection": false}"#).unwrap();
         assert!(!off.fast_connection);
+    }
+
+    #[test]
+    fn update_settings() {
+        // settings files from before the update check: it is on, nothing announced
+        let old: Config = serde_json::from_str(r#"{"auto_connect": true}"#).unwrap();
+        assert!(old.check_updates);
+        assert_eq!((old.update_announced, old.update_dismissed), (None, None));
+
+        let mut config = Config::default();
+        config.check_updates = false;
+        config.update_dismissed = Some(Version { major: 1, minor: 3, patch: 0 });
+        let text = serde_json::to_string(&config).unwrap();
+        assert!(text.contains(r#""update_dismissed":"1.3.0""#), "{text}");
+        assert_eq!(serde_json::from_str::<Config>(&text).unwrap(), config);
     }
 }

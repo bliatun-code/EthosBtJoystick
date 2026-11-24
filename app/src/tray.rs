@@ -18,7 +18,8 @@ use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     DefSubclassProc, ITaskbarList, RemoveWindowSubclass, SetWindowSubclass, Shell_NotifyIconW, TaskbarList, NIF_ICON,
-    NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIN_BALLOONUSERCLICK,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -46,6 +47,8 @@ struct State {
     /// Called for "Exit" in the menu. Expected not to return.
     on_exit: Box<dyn Fn()>,
     flags: CloseFlags,
+    /// Clicking the notification bubble that is showing opens the main window.
+    notice_opens_window: AtomicBool,
     /// Broadcast by Explorer when the taskbar is (re)created.
     taskbar_created: u32,
 }
@@ -117,6 +120,7 @@ impl Tray {
                 lang,
                 on_exit,
                 flags,
+                notice_opens_window: AtomicBool::new(false),
                 taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
             }));
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
@@ -140,8 +144,10 @@ impl Tray {
         TrayHandle(self.hwnd.0 as isize)
     }
 
-    /// Shows a notification bubble next to the icon.
-    pub fn show_notice(&self, title: &str, text: &str) {
+    /// Shows a notification bubble next to the icon. With `opens_window`, a
+    /// click on the bubble brings the main window back.
+    pub fn show_notice(&self, title: &str, text: &str, opens_window: bool) {
+        unsafe { (*self.state).notice_opens_window.store(opens_window, Ordering::Relaxed) };
         let mut data = notify_data(self.hwnd);
         data.uFlags = NIF_INFO;
         data.dwInfoFlags = NIIF_INFO;
@@ -360,6 +366,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, 
         WM_TRAY => match lparam.0 as u32 {
             WM_LBUTTONUP | WM_LBUTTONDBLCLK => show_window(state.main.0 as isize),
             WM_RBUTTONUP | WM_CONTEXTMENU => popup_menu(hwnd, state),
+            NIN_BALLOONUSERCLICK if state.notice_opens_window.load(Ordering::Relaxed) => {
+                show_window(state.main.0 as isize)
+            }
             _ => {}
         },
         WM_SHOW => show_window(state.main.0 as isize),

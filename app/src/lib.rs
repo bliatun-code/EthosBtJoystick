@@ -13,4 +13,5 @@ pub mod protocol;
 pub mod tray;
 pub mod ui;
 pub mod ui_diag;
+pub mod update;
 pub mod util;
