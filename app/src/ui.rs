@@ -27,6 +27,7 @@ use crate::joystick::{
     DRIVER_VERSION,
 };
 use crate::protocol::{encode_frame, FrameDecoder};
+use crate::update::{self, UpdateState, Updater, Version};
 use crate::util::format_address;
 
 pub(crate) const GREEN: Color32 = Color32::from_rgb(0x3F, 0xB9, 0x50);
@@ -51,14 +52,23 @@ pub struct Options {
     pub demo: bool,
     /// `--demo-weak`: like `--demo`, but with the uneven timing of a weak signal.
     pub demo_weak: bool,
+    /// `--demo-update`: like `--demo`, and pretends that a newer version of
+    /// the program has been published.
+    pub demo_update: bool,
     /// `--minimized`: start with only the tray icon (used by "Start with Windows").
     pub minimized: bool,
     /// `--diagnostics`: open the Diagnostics tab.
     pub diagnostics: bool,
 }
 
+impl Options {
+    fn is_demo(&self) -> bool {
+        self.demo || self.demo_weak || self.demo_update
+    }
+}
+
 pub fn run(start: Options) -> eframe::Result<()> {
-    let (demo, minimized) = (start.demo || start.demo_weak, start.minimized);
+    let demo = start.is_demo();
     let config = Config::load();
     let bridge = Arc::new(Bridge::new(config.mapping.clone()));
     bridge.start_housekeeping();
@@ -81,7 +91,7 @@ pub fn run(start: Options) -> eframe::Result<()> {
         "Ethos BT Joystick",
         options,
         Box::new(move |cc| {
-            let mut app = App::new(cc, config, bridge, ble, demo, minimized);
+            let mut app = App::new(cc, config, bridge, ble, start);
             if start.diagnostics {
                 app.tab = Tab::Diagnostics;
             }
@@ -136,6 +146,8 @@ struct App {
     /// "Start with Windows" is on (read from the registry).
     autostart: bool,
     settings_error: Option<String>,
+    /// Looks for new versions of the program in the background.
+    updater: Updater,
 }
 
 /// What happened to the last driver install / uninstall. Kept as data rather
@@ -186,9 +198,9 @@ impl App {
         config: Config,
         bridge: Arc<Bridge>,
         ble: BleHandle,
-        demo: bool,
-        minimized: bool,
+        start: Options,
     ) -> Self {
+        let (demo, minimized) = (start.is_demo(), start.minimized);
         cc.egui_ctx.style_mut(|style| {
             style.spacing.item_spacing = egui::vec2(8.0, 6.0);
             style.spacing.button_padding = egui::vec2(10.0, 4.0);
@@ -229,6 +241,18 @@ impl App {
             spawn_tooltip_updater(bridge.clone(), tray.handle(), tray_language.clone());
         }
 
+        // The demo does not ask GitHub by itself (it is used for trying the
+        // window and for screenshots); "Check now" still works there.
+        let updater = {
+            let ctx = cc.egui_ctx.clone();
+            let changed = move || ctx.request_repaint();
+            if start.demo_update {
+                Updater::pretend(changed)
+            } else {
+                Updater::spawn(config.check_updates && !demo, changed)
+            }
+        };
+
         let mut app = Self {
             bridge,
             ble,
@@ -251,6 +275,7 @@ impl App {
             start_in_tray: if minimized { 2 } else { 0 },
             autostart: autostart::is_enabled(),
             settings_error: None,
+            updater,
         };
 
         if !demo && app.config.auto_connect {
@@ -625,7 +650,7 @@ impl App {
         }
     }
 
-    fn settings_section(&mut self, ui: &mut egui::Ui) {
+    fn settings_section(&mut self, ui: &mut egui::Ui, updates: &UpdateState) {
         let lang = self.config.language;
         section_title(ui, "3", tr(lang, "Innstillinger", "Settings"));
 
@@ -651,6 +676,86 @@ impl App {
         if let Some(error) = &self.settings_error {
             ui.label(RichText::new(error).color(RED));
         }
+
+        ui.checkbox(
+            &mut self.config.check_updates,
+            tr(lang, "Se etter nye versjoner automatisk", "Check for new versions automatically"),
+        )
+        .on_hover_text(tr(
+            lang,
+            "Spør GitHub om nummeret på nyeste versjon når programmet starter, og deretter en gang i døgnet. \
+             Ingenting lastes ned eller installeres av seg selv.",
+            "Asks GitHub for the number of the newest version when the program starts, and then once a day. \
+             Nothing is downloaded or installed by itself.",
+        ));
+        ui.horizontal(|ui| {
+            let button = egui::Button::new(tr(lang, "Sjekk nå", "Check now"));
+            if ui.add_enabled(!updates.checking, button).clicked() {
+                self.updater.check_now();
+            }
+            if updates.checking {
+                ui.spinner();
+            } else if updates.failed {
+                ui.label(RichText::new(tr(lang, "Fikk ikke svar fra GitHub.", "No answer from GitHub.")).color(YELLOW));
+            } else if let Some(version) = updates.newer() {
+                ui.label(format!("{} {version}", tr(lang, "Ny versjon:", "New version:")));
+                if ui.link(tr(lang, "Last ned", "Download")).on_hover_text(download_hint(lang)).clicked() {
+                    update::open_download_page();
+                }
+            } else if updates.latest.is_some() {
+                ui.label(RichText::new(tr(lang, "Du har nyeste versjon.", "You have the newest version.")).weak());
+            }
+        });
+    }
+
+    /// The line across the top of the window that tells about a new version.
+    fn update_banner(&mut self, ctx: &egui::Context, version: Version) {
+        let lang = self.config.language;
+        let fill = ctx.style().visuals.panel_fill.lerp_to_gamma(ACCENT, 0.3);
+        egui::TopBottomPanel::top("update")
+            .frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(8, 6)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(new_version_text(lang, version)).strong());
+                    ui.label(format!("({} {})", tr(lang, "du har", "you have"), Version::current()));
+                    let label = RichText::new(tr(lang, "⬇ Last ned", "⬇ Download")).strong().color(Color32::WHITE);
+                    let button = egui::Button::new(label).fill(ACCENT);
+                    if ui.add(button).on_hover_text(download_hint(lang)).clicked() {
+                        update::open_download_page();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let hint = tr(lang, "Skjul til neste versjon", "Hide until the next version");
+                        if ui.small_button("✖").on_hover_text(hint).clicked() {
+                            self.config.update_dismissed = Some(version);
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Tells about a new version once: with the line in the window when the
+    /// window is on screen, otherwise with a notification next to the tray icon.
+    fn announce_update(&mut self, ctx: &egui::Context, version: Version) {
+        if self.config.update_announced == Some(version) {
+            return;
+        }
+        self.config.update_announced = Some(version);
+        let lang = self.config.language;
+        let on_screen = !ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        if on_screen || self.config.update_dismissed == Some(version) {
+            return;
+        }
+        if let Some(tray) = &self.tray {
+            tray.show_notice(
+                &new_version_text(lang, version),
+                tr(
+                    lang,
+                    "Klikk her for å åpne Ethos BT Joystick og laste den ned.",
+                    "Click here to open Ethos BT Joystick and download it.",
+                ),
+                true,
+            );
+        }
     }
 
     /// Sends the window to the notification area; the tray icon brings it back.
@@ -667,6 +772,7 @@ impl App {
                     "Programmet kjører videre her. Klikk på ikonet for å åpne vinduet, høyreklikk for å avslutte.",
                     "The program keeps running here. Click the icon to open the window, right-click to exit.",
                 ),
+                false,
             );
         }
     }
@@ -863,6 +969,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_background();
         let snap = self.bridge.snapshot();
+        let updates = self.updater.state();
         let lang = self.config.language;
         self.tray_language.store(tray_language_code(lang), Ordering::Relaxed);
 
@@ -919,6 +1026,16 @@ impl eframe::App for App {
             ui.add_space(2.0);
         });
 
+        if let Some(version) = updates.newer() {
+            // not while the minimised start is still putting the window away
+            if self.start_in_tray == 0 {
+                self.announce_update(ctx, version);
+            }
+            if self.config.update_dismissed != Some(version) {
+                self.update_banner(ctx, version);
+            }
+        }
+
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -934,6 +1051,13 @@ impl eframe::App for App {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).small().weak());
+                    // stays here after the line at the top has been closed
+                    if let Some(version) = updates.newer() {
+                        let text = RichText::new(new_version_text(lang, version)).small();
+                        if ui.link(text).on_hover_text(download_hint(lang)).clicked() {
+                            update::open_download_page();
+                        }
+                    }
                 });
             });
         });
@@ -947,7 +1071,7 @@ impl eframe::App for App {
                 self.joystick_section(ui, &snap);
                 ui.add_space(10.0);
                 ui.separator();
-                self.settings_section(ui);
+                self.settings_section(ui, &updates);
                 ui.add_space(10.0);
                 ui.separator();
                 self.help_section(ui);
@@ -997,6 +1121,9 @@ impl eframe::App for App {
                 self.bridge.set_mapping(self.config.mapping.clone());
             }
             self.bridge.set_fast_connection(self.config.fast_connection);
+            if self.config.check_updates != self.saved.check_updates {
+                self.updater.set_automatic(self.config.check_updates && !self.demo);
+            }
             self.config.save();
             self.saved = self.config.clone();
         }
@@ -1011,6 +1138,18 @@ impl eframe::App for App {
         let interval = if moving && !minimized { 40 } else { 500 };
         ctx.request_repaint_after(Duration::from_millis(interval));
     }
+}
+
+fn new_version_text(lang: Lang, version: Version) -> String {
+    format!("{} {version} {}", tr(lang, "Versjon", "Version"), tr(lang, "er tilgjengelig", "is available"))
+}
+
+fn download_hint(lang: Lang) -> &'static str {
+    tr(
+        lang,
+        "Åpner nedlastingssiden på GitHub i nettleseren",
+        "Opens the download page on GitHub in your browser",
+    )
 }
 
 fn tray_language_code(lang: Lang) -> u8 {

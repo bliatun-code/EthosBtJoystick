@@ -42,6 +42,7 @@ fn main() {
     let options = ui::Options {
         demo: has("--demo"),
         demo_weak: has("--demo-weak"),
+        demo_update: has("--demo-update"),
         minimized: has(autostart::ARG_MINIMIZED),
         diagnostics: has("--diagnostics"),
     };

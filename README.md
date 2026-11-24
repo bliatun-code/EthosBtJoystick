@@ -47,6 +47,18 @@ connection drops, it reconnects by itself.
   right-click it to exit.
 - Starting the program a second time just brings the running one to the front.
 
+### New versions
+
+The program asks GitHub for the newest published version when it starts, and then once
+a day. When there is a newer one, a line at the top of the window says so, with a
+**Download** button that opens the release page in your browser. If the window is in
+the notification area, a notification next to the icon tells you instead.
+
+Nothing is downloaded or installed by itself. The question is an ordinary web request
+to `api.github.com`; apart from the name of the program it carries nothing from your
+PC. Switch it off with **Check for new versions automatically** under *Settings* –
+**Check now** still works then.
+
 ### Diagnostics
 
 The **Diagnostics** tab shows how good the Bluetooth link is, and helps to find out why
@@ -89,7 +101,9 @@ Windows for the fastest connection** on the Diagnostics tab.
 The **Test in Windows (joy.cpl)** button opens Windows' own game controller test.
 
 Settings are stored in `%APPDATA%\EthosBtJoystick\config.json`.
-`EthosBtJoystick.exe --demo` shows the window with simulated channels, without a radio.
+`EthosBtJoystick.exe --demo` shows the window with simulated channels, without a radio;
+`--demo-update` does the same and also shows what the notice about a new version looks
+like.
 
 ## What does the driver installation do?
 
@@ -186,7 +200,7 @@ also creates a draft release with the zip and the installer attached.
 | `driver\` | The driver (C), INF file and build script. |
 | `installer\` | The Inno Setup script for the installer. |
 | `tools\` | Scripts that fetch the WDK and Inno Setup, draw the icon and package a release. |
-| `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup), `joycheck` (writes to the installed driver and reads back) and `adapterinfo` (prints the diagnostics report). |
+| `app\examples\` | Developer tools: `scan` (Bluetooth search), `hidtree` (HID lookup), `joycheck` (writes to the installed driver and reads back), `adapterinfo` (prints the diagnostics report) and `updatecheck` (asks GitHub for the newest version). |
 
 ## Troubleshooting
 
